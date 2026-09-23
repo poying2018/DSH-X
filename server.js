@@ -22,16 +22,20 @@ import {
 import {
   autoStartEnabled,
   DEFAULT_PORT,
+  defaultDshHome,
   ensureSettings,
   ensureWritableDir,
   loadSettings,
   loadSettingsSync,
   parseArgs,
+  planMove,
   planVersionMigration,
   resolveDataDir,
+  resolveDshHome,
   resolvePort,
   resolveProfile,
   safeDataDir,
+  safeDshHome,
   safeLang,
   safePort,
   safeProfile,
@@ -44,6 +48,8 @@ const ROOT = dirname(fileURLToPath(import.meta.url))
 let DATA = resolveDataDir()
 const PUBLIC = join(ROOT, 'public')
 let CONFIG = join(DATA, 'config.json')
+/** 插件和 profile 的家目录（dsh 的 DSH_HOME）：默认 ~/.dsh，设置页可改并一起搬。 */
+let DSH_HOME = resolveDshHome()
 const PKG = '@deepseek-ai/dsh'
 const MARKET_PKG = 'dshmarket'
 const APP_VERSION = String(pkg.version || '0.0.0')
@@ -128,7 +134,7 @@ function versionDir(version) {
 }
 
 function homeDir() {
-  return join(homedir(), '.dsh')
+  return DSH_HOME
 }
 
 function managedBin(version) {
@@ -532,50 +538,83 @@ export async function moveEntry(from, to) {
 }
 
 /**
+ * 逐个搬条目，任一步失败就把已经搬走的按原路放回源目录。
+ *
+ * 版本目录和插件家目录共用这一套：两边都是几百 MB 的目录树，"搬到一半崩了留个
+ * 半成品"比搬不动更糟。`move` 是留出来的测试缝——回滚那条路径需要一次可控的失败。
+ * 返回搬成功的名字（含 config.json 这类附属文件，由调用方按需过滤）。
+ */
+async function moveWithRollback(pairs, label, move = moveEntry) {
+  const done = []
+  try {
+    for (const item of pairs) {
+      await move(item.from, item.to)
+      done.push(item)
+      pushLog(`已搬走${label} ${item.name}`)
+    }
+  } catch (error) {
+    for (const item of done.slice().reverse()) {
+      await move(item.to, item.from).catch(() => {})
+    }
+    const names = done.map((item) => item.name)
+    pushLog(`迁移失败（已搬回的 ${names.join('、') || '无'} 放回原目录）: ${error instanceof Error ? error.message : error}`)
+    const rolled = names.length ? `已搬走的 ${names.join('、')} 已放回原目录，` : ''
+    throw new Error(`${label}迁移失败，${rolled}目录保持不动：${error instanceof Error ? error.message : error}`)
+  }
+  return done.map((item) => item.name)
+}
+
+/** 列出目录里的条目名（目录不存在给空数组）。 */
+function entriesIn(dir, { dirsOnly = false } = {}) {
+  if (!existsSync(dir)) return []
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => !dirsOnly || entry.isDirectory())
+    .map((entry) => entry.name)
+}
+
+/**
  * 把旧版本目录里的已装版本搬到新目录（含 config.json）。
  *
  * 先整体判冲突再动手：一个版本几百 MB，搬到一半才发现撞名就回滚不干净了。
- * 真的搬失败（盘掉线、目标被占用）时把已经搬走的挨个放回源目录，源目录回到原样，
- * 抛出人话。调用方在这之前不会改 DATA，所以管理页看到的状态和磁盘是一致的。
- * `move` 是留出来的测试缝：回滚那条路径需要一次可控的失败。
- * 返回搬成功的版本名数组。
+ * 调用方在这之前不会改 DATA，所以管理页看到的状态和磁盘是一致的。
+ * 返回搬成功的版本名数组（不含 config.json）。
  */
 export async function migrateVersions(from, to, { move = moveEntry } = {}) {
   const source = join(from, 'versions')
   if (!existsSync(source)) return []
-  const installed = readdirSync(source, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
   const target = join(to, 'versions')
-  const existing = existsSync(target)
-    ? readdirSync(target, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name)
-    : []
-  const plan = planVersionMigration(installed, existing)
+  const plan = planVersionMigration(entriesIn(source, { dirsOnly: true }), entriesIn(target, { dirsOnly: true }))
   if (plan.blocked.length) {
     throw new Error(`新目录里已存在 ${plan.blocked.join('、')}，请先清掉再搬`)
   }
-  const moved = []
-  try {
-    await mkdir(target, { recursive: true })
-    for (const name of plan.movable) {
-      await move(join(source, name), join(target, name))
-      moved.push(name)
-      pushLog(`已搬走版本 ${name}`)
-    }
-    // config.json 记的就是这个目录装了哪些版本，跟着走；新目录已有自己的就不覆盖
-    const sourceConfig = join(from, 'config.json')
-    if (existsSync(sourceConfig) && !existsSync(join(to, 'config.json'))) {
-      await move(sourceConfig, join(to, 'config.json'))
-    }
-  } catch (error) {
-    for (const name of moved.slice().reverse()) {
-      await move(join(target, name), join(source, name)).catch(() => {})
-    }
-    pushLog(`迁移失败（已搬回的 ${moved.join('、') || '无'} 放回原目录）: ${error instanceof Error ? error.message : error}`)
-    const rolled = moved.length ? `已搬走的 ${moved.join('、')} 已放回原目录，` : ''
-    throw new Error(`版本迁移失败，${rolled}版本目录保持不动：${error instanceof Error ? error.message : error}`)
+  await mkdir(target, { recursive: true })
+  const pairs = plan.movable.map((name) => ({ name, from: join(source, name), to: join(target, name) }))
+  // config.json 记的就是这个目录装了哪些版本，跟着走；新目录已有自己的就不覆盖
+  const sourceConfig = join(from, 'config.json')
+  if (existsSync(sourceConfig) && !existsSync(join(to, 'config.json'))) {
+    pairs.push({ name: 'config.json', from: sourceConfig, to: join(to, 'config.json') })
   }
-  return moved
+  const moved = await moveWithRollback(pairs, '版本', move)
+  return moved.filter((name) => plan.movable.includes(name))
+}
+
+/**
+ * 把插件家目录（~/.dsh）整个搬到新位置：顶层条目逐个挪，同名冲突先拒绝。
+ *
+ * 有一点必须说在前面：profile 的 node_modules 里，pnpm 用的是带绝对路径的链接，
+ * 跨盘搬完可能留下断链。这里不假装能搬得完美——启动时 dsh 自己会报
+ * `cannot resolve profile bundle`，而那条路径已经有 repairProfileDeps 兜底
+ * （重装 profile 依赖）。所以搬完提示一次，坏了有得修。
+ */
+export async function migrateHome(from, to, { move = moveEntry } = {}) {
+  if (!existsSync(from)) return []
+  const plan = planMove(entriesIn(from), entriesIn(to))
+  if (plan.blocked.length) {
+    const shown = plan.blocked.slice(0, 5).join('、')
+    throw new Error(`新目录里已存在 ${shown}${plan.blocked.length > 5 ? ' 等' : ''}，请先清掉再搬`)
+  }
+  await mkdir(to, { recursive: true })
+  return moveWithRollback(plan.movable.map((name) => ({ name, from: join(from, name), to: join(to, name) })), '插件内容', move)
 }
 
 /**
@@ -598,6 +637,9 @@ async function publicSettings() {
   return {
     dataDir: DATA,
     dshHome: homeDir(),
+    dshHomeDefault: defaultDshHome(),
+    // 页面自己数不了文件系统，问"旧目录里有多少东西要搬"得由这里给
+    dshHomeEntries: entriesIn(homeDir()).length,
     // port 是配置值（重启后生效），listenPort 是当前真正在监听的端口
     port: stored.port ?? DEFAULT_PORT,
     listenPort: PORT,
@@ -613,8 +655,20 @@ async function publicSettings() {
   }
 }
 
+async function applyDshHome(dir, { migrate = false } = {}) {
+  await ensureWritableDir(dir)
+  const moved = migrate && dir !== DSH_HOME ? await migrateHome(DSH_HOME, dir) : null
+  DSH_HOME = dir
+  pushLog(`插件目录 ${DSH_HOME}`)
+  if (moved && moved.length) {
+    pushLog('插件里的链接是带绝对路径的，启动报解析不到 bundle 时会自动重装 profile 依赖')
+  }
+  return moved
+}
+
 async function saveManagerSettings(body) {
   let migrated = null
+  let homeMigrated = null
   if (body.dataDir) {
     const dir = safeDataDir(body.dataDir)
     if (dir !== DATA && current) throw new Error('请先停止再改版本目录')
@@ -623,8 +677,19 @@ async function saveManagerSettings(body) {
     // 显式传 migrateVersions:false 才是只换指针（旧目录里的版本留在原地）。
     migrated = await applyDataDir(dir, { migrate: body.migrateVersions !== false })
   }
+  if (body.dshHome) {
+    const dir = safeDshHome(body.dshHome)
+    if (dir !== DSH_HOME) {
+      // 插件目录里全是 dsh 进程打开着的文件，边跑边搬只会搬出一堆断链
+      if (current) throw new Error('请先停止 dsh 再改插件目录')
+      if (installing) throw new Error('正在安装，稍后再改插件目录')
+      homeMigrated = await applyDshHome(dir, { migrate: body.migrateDshHome !== false })
+    }
+  }
   const stored = await saveSettings({
     dataDir: DATA,
+    // 记成默认值等于没记：留空才表示"跟着家目录走"，换用户名也不会被旧路径钉死
+    dshHome: DSH_HOME === defaultDshHome() ? '' : DSH_HOME,
     ...('port' in body ? { port: safePort(body.port) } : {}),
     ...('profile' in body ? { profile: safeProfile(body.profile) } : {}),
     ...('args' in body ? { args: safeArgs(body.args) } : {}),
@@ -653,6 +718,7 @@ async function saveManagerSettings(body) {
   const out = await publicSettings()
   // 把这次真正搬走的版本回给页面，提示行才能说清"搬了"还是"没搬"
   if (migrated) out.migrated = migrated
+  if (homeMigrated) out.migratedHome = homeMigrated
   return out
 }
 
@@ -2058,6 +2124,7 @@ export async function startServer() {
   LANG = LANG === 'en' ? 'en' : 'zh'
   DATA = resolveDataDir()
   CONFIG = join(DATA, 'config.json')
+  DSH_HOME = resolveDshHome()
   await mkdir(DATA, { recursive: true })
   cleanStaleUpdates()
   // 默认 16KB 的请求头上限会被浏览器里堆积的 cookie 顶爆（HTTP 431），放宽到 128KB

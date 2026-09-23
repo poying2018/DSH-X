@@ -897,6 +897,18 @@
             <input id="migrateVersions" type="checkbox" checked />
           </label>
           <p class="hint" id="migrateHint"></p>
+          <label class="field wide"><span data-i18n="插件目录">插件目录</span>
+            <span class="row-input">
+              <input id="dshHome" type="text" />
+              <button class="ghost" id="pickHome" type="button" data-i18n="浏览…">浏览…</button>
+            </span>
+          </label>
+          <p class="hint" id="dshHomeHint"></p>
+          <label class="toggle" id="homeMigrateRow" hidden>
+            <span data-i18n="把已装的插件和内容一起搬过去">把已装的插件和内容一起搬过去</span>
+            <input id="migrateDshHome" type="checkbox" checked />
+          </label>
+          <p class="hint" id="homeMigrateHint"></p>
         </details>
         <button class="primary" id="saveSettings" type="button" style="margin-top: 22px" data-i18n="保存">保存</button>
         <p class="hint" id="settingsHint"></p>
@@ -1026,15 +1038,22 @@
   "卸载 {version}？插件和数据会保留。": "Uninstall {version}? Plugins and data are kept.",
   "卸载 {version}？这是系统里的 DSH，会从本机移除。插件和数据会保留。": "Uninstall {version}? This is the system DSH and will be removed from this machine. Plugins and data are kept.",
   "正在更新到 {latest}": "Updating to {latest}",
-  "已保存。重启启动器后管理页改到 {port} 端口。": "Saved. The manager moves to port {port} after a restart.",
-  "已保存。版本目录已改为 {dir}；旧目录里的版本没有搬，需要就手动复制过去。": "Saved. The version directory is now {dir}; the versions in the old directory were not moved, copy them over if you need them.",
-  "已保存。版本目录已改为 {dir}，{count} 个已装版本一起搬过去了。": "Saved. The version directory is now {dir}, and {count} installed versions moved with it.",
-  "已保存。版本目录已改为 {dir}（旧目录里没有已装版本，没什么可搬）。": "Saved. The version directory is now {dir} (the old directory had no installed versions to move).",
+  "重启启动器后管理页改到 {port} 端口。": "The manager moves to port {port} after a restart.",
+  "版本目录已改为 {dir}；旧目录里的版本没有搬，需要就手动复制过去。": "The version directory is now {dir}; the versions in the old directory were not moved, copy them over if you need them.",
+  "版本目录已改为 {dir}，{count} 个已装版本一起搬过去了。": "The version directory is now {dir}, and {count} installed versions moved with it.",
+  "版本目录已改为 {dir}（旧目录里没有已装版本，没什么可搬）。": "The version directory is now {dir} (the old directory had no installed versions to move).",
+  "插件目录已改为 {dir}，{count} 项内容一起搬过去了。": "The plugins directory is now {dir}, and {count} items moved with it.",
+  "插件目录已改为 {dir}（旧目录里没有要搬的内容）。": "The plugins directory is now {dir} (there was nothing in the old directory to move).",
+  "插件目录已改为 {dir}；旧目录里的插件内容没有搬。": "The plugins directory is now {dir}; the plugin data in the old directory was not moved.",
   "旧目录里有 {count} 个已装版本（每个几百 MB）。搬过去后旧目录就空了；只改目录的话得自己复制。": "The old directory holds {count} installed versions (a few hundred MB each). Moving them leaves it empty; if you only change the directory you have to copy them yourself.",
-  "读不到已装版本数量，先按不迁移处理。": "Could not read the installed version count — treating this as no migration.",
+  "旧目录里有 {count} 项插件和 profile 内容。搬过去后旧目录就空了；插件里的链接带绝对路径，搬完若报解析不到 bundle，启动时会自动重装依赖。": "The old directory holds {count} plugin / profile items. Moving them leaves it empty; plugin links carry absolute paths, so if a bundle fails to resolve afterwards the launcher reinstalls the profile dependencies on start.",
+  "读不到旧目录里有多少东西，先按不迁移处理。": "Could not count what is in the old directory — treating this as no migration.",
   "把旧目录里已装的版本一起搬过去": "Move the installed versions along",
+  "把已装的插件和内容一起搬过去": "Move the installed plugins and data along",
+  "插件目录": "Plugins directory",
   "当前实际监听 {live} 端口（配置的 {port} 被别的程序占用，启动时自动顺延）。": "Actually listening on {live} (port {port} was taken, so the launcher moved on).",
-  "dsh 各版本装在这里（几百 MB 一个）；插件和 profile 仍在 {home}，不受影响。": "dsh versions go here (a few hundred MB each); plugins and profiles stay in {home} and are unaffected.",
+  "插件、profile 和 dsh 的数据都在这里；改完要重启 dsh 才生效。默认 {home}。": "Plugins, profiles and dsh data live here; restart dsh after changing it. Default: {home}.",
+  "dsh 各版本装在这里（几百 MB 一个）。": "dsh versions go here (a few hundred MB each).",
   "要卸载 {name} 吗？这是整包删除，不是停用；装回来要去插件市场重新安装。": "Uninstall {name}? This removes the whole package, not just disables it — you would have to reinstall it from the marketplace.",
   "正在卸载 {name}…": "Uninstalling {name}…",
   "{name} 已卸载。": "{name} uninstalled.",
@@ -2121,31 +2140,66 @@
     const migrateRowEl = document.getElementById('migrateRow')
     const migrateEl = document.getElementById('migrateVersions')
     const migrateHint = document.getElementById('migrateHint')
+    const pickHomeEl = document.getElementById('pickHome')
+    const dshHomeEl = document.getElementById('dshHome')
+    const dshHomeHint = document.getElementById('dshHomeHint')
+    const homeMigrateRowEl = document.getElementById('homeMigrateRow')
+    const homeMigrateEl = document.getElementById('migrateDshHome')
+    const homeMigrateHint = document.getElementById('homeMigrateHint')
     const settingsHint = document.getElementById('settingsHint')
     const saveSettingsEl = document.getElementById('saveSettings')
-    // 服务端当前真正在用的版本目录，用来判断"用户改过了没有"
+    // 服务端当前真正在用的两个目录，用来判断"用户改过了没有"
     let liveDataDir = ''
+    let liveDshHome = ''
+    // 旧家目录里有多少顶层条目：服务端数好带过来，页面自己读不到文件系统
+    let liveHomeEntries = 0
 
-    // 只在"目录改过了"且"旧目录里确实有版本"时，才问要不要一起搬。
-    // 数量取自动态 /api/state：/api/settings 走 publicSettings()，里面没有版本列表。
-    async function refreshMigrateRow() {
-      const edited = Boolean(dataDirEl.value.trim()) && normDir(dataDirEl.value) !== normDir(liveDataDir)
+    /**
+     * 两个"换目录"字段共用一套搬迁提示：只在"改过了"且"旧目录里确实有东西"时才问。
+     * 版本数取自动态 /api/state（publicSettings 里没有版本列表），家目录条目数跟着
+     * 设置一起回传。
+     */
+    const moveFields = [
+      {
+        input: dataDirEl,
+        live: () => liveDataDir,
+        row: migrateRowEl,
+        hint: migrateHint,
+        toggle: migrateEl,
+        count: async () => ((await getJson('/api/state')).versions || []).length,
+        text: '旧目录里有 {count} 个已装版本（每个几百 MB）。搬过去后旧目录就空了；只改目录的话得自己复制。',
+      },
+      {
+        input: dshHomeEl,
+        live: () => liveDshHome,
+        row: homeMigrateRowEl,
+        hint: homeMigrateHint,
+        toggle: homeMigrateEl,
+        count: async () => liveHomeEntries,
+        text: '旧目录里有 {count} 项插件和 profile 内容。搬过去后旧目录就空了；插件里的链接带绝对路径，搬完若报解析不到 bundle，启动时会自动重装依赖。',
+      },
+    ]
+
+    async function refreshMoveRow(field) {
+      const edited = Boolean(field.input.value.trim()) && normDir(field.input.value) !== normDir(field.live())
       let count = 0
       if (edited) {
         try {
-          const snapshot = await getJson('/api/state')
-          count = (Array.isArray(snapshot?.versions) ? snapshot.versions : []).length
+          count = Number(await field.count()) || 0
         } catch {
-          migrateRowEl.hidden = true
-          migrateHint.textContent = t('读不到已装版本数量，先按不迁移处理。')
+          field.row.hidden = true
+          field.hint.textContent = t('读不到旧目录里有多少东西，先按不迁移处理。')
           return
         }
       }
       const show = edited && count > 0
-      migrateRowEl.hidden = !show
-      migrateHint.textContent = show
-        ? t('旧目录里有 {count} 个已装版本（每个几百 MB）。搬过去后旧目录就空了；只改目录的话得自己复制。', { count })
-        : ''
+      field.row.hidden = !show
+      if (!show) field.hint.textContent = ''
+      else field.hint.textContent = t(field.text, { count })
+    }
+
+    function refreshMigrateRow() {
+      return Promise.all(moveFields.map((field) => refreshMoveRow(field)))
     }
 
     function fillSettings(data) {
@@ -2170,9 +2224,14 @@
       if ('dataDir' in data) {
         dataDirEl.value = String(data.dataDir ?? '')
         liveDataDir = String(data.dataDir ?? '')
-        // 一次说清两件事：这是什么的目录、插件和 profile 不归它管（搬家只搬版本）
-        dataDirHint.textContent = t('dsh 各版本装在这里（几百 MB 一个）；插件和 profile 仍在 {home}，不受影响。', { home: data.dshHome || '~/.dsh' })
+        dataDirHint.textContent = t('dsh 各版本装在这里（几百 MB 一个）。')
         refreshMigrateRow()
+      }
+      if ('dshHome' in data) {
+        dshHomeEl.value = String(data.dshHome ?? '')
+        liveDshHome = String(data.dshHome ?? '')
+        liveHomeEntries = Number(data.dshHomeEntries) || 0
+        dshHomeHint.textContent = t('插件、profile 和 dsh 的数据都在这里；改完要重启 dsh 才生效。默认 {home}。', { home: data.dshHomeDefault || '~/.dsh' })
       }
       if ('autoStart' in data) autoStartEl.checked = Boolean(data.autoStart)
       if ('seedMarket' in data) seedMarketEl.checked = data.seedMarket !== false
@@ -2188,35 +2247,45 @@
     // 比较目录时忽略末尾斜杠：用户常带着 '\' 保存，与 resolve 后的值比会误判成改过
     const normDir = (value) => String(value ?? '').trim().replace(/[\\/]+$/, '')
 
-    dataDirEl.oninput = refreshMigrateRow
-    dataDirEl.onchange = refreshMigrateRow
+    for (const field of moveFields) {
+      field.input.oninput = refreshMigrateRow
+      field.input.onchange = refreshMigrateRow
+    }
 
-    pickDirEl.onclick = async () => {
-      pickDirEl.disabled = true
-      const before = dataDirHint.textContent
-      dataDirHint.textContent = t('在弹出的对话框里选一个目录…')
-      try {
-        const data = await post('/api/pick-dir', {})
-        if (data.path) {
-          dataDirEl.value = data.path
-          dataDirHint.textContent = t('已选好目录，别忘了点「保存」让它生效。')
-          refreshMigrateRow()
-        } else {
-          dataDirHint.textContent = data.error ? t('没选成：{error}', { error: data.error }) : before
+    /** 「浏览…」：目录选择框是服务端弹的，两个目录字段共用一套回填和提示。 */
+    function wirePicker(buttonEl, inputEl, hintEl) {
+      buttonEl.onclick = async () => {
+        buttonEl.disabled = true
+        const before = hintEl.textContent
+        hintEl.textContent = t('在弹出的对话框里选一个目录…')
+        try {
+          const data = await post('/api/pick-dir', {})
+          if (data.path) {
+            inputEl.value = data.path
+            hintEl.textContent = t('已选好目录，别忘了点「保存」让它生效。')
+            refreshMigrateRow()
+          } else {
+            hintEl.textContent = data.error ? t('没选成：{error}', { error: data.error }) : before
+          }
+        } catch (error) {
+          hintEl.textContent = error.message
+        } finally {
+          buttonEl.disabled = false
         }
-      } catch (error) {
-        dataDirHint.textContent = error.message
-      } finally {
-        pickDirEl.disabled = false
       }
     }
+
+    wirePicker(pickDirEl, dataDirEl, dataDirHint)
+    wirePicker(pickHomeEl, dshHomeEl, dshHomeHint)
 
     saveSettingsEl.onclick = async () => {
       saveSettingsEl.disabled = true
       settingsHint.textContent = t('正在保存…')
       const dirBefore = dataDirEl.value.trim()
-      // fillSettings 会把 liveDataDir 更新成新值，所以"这次到底改没改目录"要先记下来
+      const homeBefore = dshHomeEl.value.trim()
+      // fillSettings 会把 live* 更新成新值，所以"这次到底改没改目录"要先记下来
       const dirChanged = Boolean(dirBefore) && normDir(dirBefore) !== normDir(liveDataDir)
+      const homeChanged = Boolean(homeBefore) && normDir(homeBefore) !== normDir(liveDshHome)
       try {
         const data = await post('/api/settings', {
           profile: profileEl.value.trim(),
@@ -2225,8 +2294,10 @@
           port: Number(portEl.value),
           // 留空表示不改：服务端只在有值时才热切换版本目录
           ...(dirBefore ? { dataDir: dirBefore } : {}),
-          // 只在新旧目录真的不同才问迁移；相同目录时这个标志没有意义，别写成 false 掩盖默认
-          ...(dirBefore && normDir(dirBefore) !== normDir(liveDataDir) ? { migrateVersions: migrateEl.checked } : {}),
+          // 只在新旧目录真的不同才带迁移标志：同目录保存不该被当成"不迁移"
+          ...(dirChanged ? { migrateVersions: migrateEl.checked } : {}),
+          ...(homeBefore ? { dshHome: homeBefore } : {}),
+          ...(homeChanged ? { migrateDshHome: homeMigrateEl.checked } : {}),
           autoStart: autoStartEl.checked,
           seedMarket: seedMarketEl.checked,
           autoDisablePlugins: autoDisableEl.checked,
@@ -2240,17 +2311,27 @@
           loadSettings()
         }
         // 管理页还监听在旧端口上：换端口得重启启动器（窗口和托盘都是它开的）
+        const notes = []
         if (Number(data.port) !== Number(data.listenPort)) {
-          settingsHint.textContent = t('已保存。重启启动器后管理页改到 {port} 端口。', { port: data.port })
-        } else if (Array.isArray(data.migrated) && data.migrated.length) {
-          settingsHint.textContent = t('已保存。版本目录已改为 {dir}，{count} 个已装版本一起搬过去了。', { dir: data.dataDir, count: data.migrated.length })
-        } else if (Array.isArray(data.migrated)) {
-          settingsHint.textContent = t('已保存。版本目录已改为 {dir}（旧目录里没有已装版本，没什么可搬）。', { dir: data.dataDir })
-        } else if (dirChanged) {
-          settingsHint.textContent = t('已保存。版本目录已改为 {dir}（立即生效）；旧目录里的版本没有搬，需要就手动复制过去。', { dir: data.dataDir })
-        } else {
-          settingsHint.textContent = t('已保存。')
+          notes.push(t('重启启动器后管理页改到 {port} 端口。', { port: data.port }))
         }
+        if (Array.isArray(data.migrated) && data.migrated.length) {
+          notes.push(t('版本目录已改为 {dir}，{count} 个已装版本一起搬过去了。', { dir: data.dataDir, count: data.migrated.length }))
+        } else if (Array.isArray(data.migrated)) {
+          notes.push(t('版本目录已改为 {dir}（旧目录里没有已装版本，没什么可搬）。', { dir: data.dataDir }))
+        } else if (dirChanged) {
+          notes.push(t('版本目录已改为 {dir}；旧目录里的版本没有搬，需要就手动复制过去。', { dir: data.dataDir }))
+        }
+        if (Array.isArray(data.migratedHome) && data.migratedHome.length) {
+          notes.push(t('插件目录已改为 {dir}，{count} 项内容一起搬过去了。', { dir: data.dshHome, count: data.migratedHome.length }))
+        } else if (Array.isArray(data.migratedHome)) {
+          notes.push(t('插件目录已改为 {dir}（旧目录里没有要搬的内容）。', { dir: data.dshHome }))
+        } else if (homeChanged) {
+          notes.push(t('插件目录已改为 {dir}；旧目录里的插件内容没有搬。', { dir: data.dshHome }))
+        }
+        settingsHint.textContent = notes.length
+          ? `${t('已保存。')}${notes.join(t(''))}`
+          : t('已保存。')
       } catch (error) {
         settingsHint.textContent = error.message
       } finally {

@@ -21,10 +21,11 @@ A lightweight Windows launcher for DeepSeek Harness. Pick a version, start DSH W
 ## Features
 
 - **Pick a version and go**: start / stop / restart / update / uninstall
-- **Plugins page**: list installed plugins, toggle each with one click
+- **Plugins page**: list installed plugins, toggle each with one click, or uninstall a package outright
 - **Compatibility mode**: on a failed start, disable the plugins named in the error (one click to restore); after boot it checks the client plugin bundles the page references and reports the verdict, telling a broken install apart from a stale tab
 - **Faster startup**: equivalent fast implementations at the bundle composition point (saves about 1–2 s), skipped automatically once dsh changes underneath
 - **Plugins stay where dsh puts them**: data lives in `~/.dsh`, so switching versions needs no plugin reinstall
+- **Both directories can leave the system drive**: the version directory and the plugins directory are set separately on the Settings page, each with a "move what is already installed" option; a failed move rolls back as a whole, so you never end up with half a version or half a profile
 - **Keeps one older version**: only the newest and the most recently installed are kept (enough to roll back); older ones are pruned after install
 - **Tray resident**: closing the page does not quit; the UI uses your system browser
 - **Bundled Node / npm**: the installer ships a portable `node.exe` and npm 10; packages come from the npmmirror registry

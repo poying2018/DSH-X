@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
@@ -53,6 +54,9 @@ export const DEFAULT_PROFILE = 'web'
 
 export const DEFAULTS = {
   dataDir: '',
+  // 插件和 profile 的家目录（dsh 的 DSH_HOME）：留空 = 默认的 ~/.dsh。
+  // 单独可改是因为插件能长到上百 MB，有人要和版本目录一起挪出系统盘。
+  dshHome: '',
   port: DEFAULT_PORT,
   profile: DEFAULT_PROFILE,
   // 界面语言：zh / en（安装时选的语言写进安装目录的 lang.txt，启动器读一次落到这里）
@@ -168,18 +172,49 @@ export function safeDataDir(dir) {
   return resolve(trimmed)
 }
 
+/** 插件目录和版本目录同规：必须是绝对路径，别让它悄悄落到启动器旁边。 */
+export function safeDshHome(dir) {
+  if (typeof dir !== 'string' || !dir.trim()) throw new Error('插件目录不能为空')
+  const trimmed = dir.trim()
+  if (!isAbsolute(trimmed)) throw new Error('请使用绝对路径')
+  return resolve(trimmed)
+}
+
+/** dsh 自己决定不了家目录，默认位置由这里给（启动器把它作为 DSH_HOME 传下去）。 */
+export function defaultDshHome() {
+  return join(homedir(), '.dsh')
+}
+
+/** 插件和 profile 的家目录：环境变量 DSH_HOME_DIR（开发/测试用）> 设置 > ~/.dsh。 */
+export function resolveDshHome() {
+  if (process.env.DSH_HOME_DIR) {
+    try {
+      return safeDshHome(process.env.DSH_HOME_DIR)
+    } catch { /* 环境变量不合法就退回设置 */ }
+  }
+  try {
+    const stored = loadSettingsSync().dshHome
+    if (stored) return safeDshHome(stored)
+  } catch { /* 历史文件里的脏值不影响启动，回默认 */ }
+  return defaultDshHome()
+}
+
 /**
- * 版本目录迁移计划：目标目录里已经有同名版本的算冲突。
+ * 迁移计划：目标目录里已经有同名的算冲突。
  *
  * 冲突一律不覆盖——一个版本几百 MB，盖错了没法回滚，让用户自己先清一头。
  */
-export function planVersionMigration(installed, existing) {
+export function planMove(names, existing) {
   const taken = new Set(existing ?? [])
-  const names = [...(installed ?? [])].sort()
+  const sorted = [...(names ?? [])].sort()
   return {
-    movable: names.filter((name) => !taken.has(name)),
-    blocked: names.filter((name) => taken.has(name)),
+    movable: sorted.filter((name) => !taken.has(name)),
+    blocked: sorted.filter((name) => taken.has(name)),
   }
+}
+
+export function planVersionMigration(installed, existing) {
+  return planMove(installed, existing)
 }
 
 export function fallbackDataDir() {  const local = join(ROOT, 'data')
@@ -224,6 +259,7 @@ export async function saveSettings(patch) {
   const current = await loadSettings()
   const merged = { ...current, ...patch }
   if (merged.dataDir) merged.dataDir = safeDataDir(merged.dataDir)
+  if (merged.dshHome) merged.dshHome = safeDshHome(merged.dshHome)
   // 历史文件里的脏端口值顺手修回默认；显式改端口时才把错误抛给调用方
   try {
     merged.port = safePort(merged.port)
