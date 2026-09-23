@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { planVersionMigration } from '../settings.js'
-import { migrateVersions, moveEntry } from '../server.js'
+
+// server.js 一被 import 就把日志目录定在 %APPDATA%\DSH，而迁移过程是要 pushLog 的——
+// 不先把 APPDATA 指到临时目录，跑一次测试就往真用户的 manager.log 里写一堆假失败。
+process.env.APPDATA = mkdtempSync(join(tmpdir(), 'dsh-migrate-log-'))
+const { migrateVersions, moveEntry } = await import('../server.js')
 
 /** 造一个版本目录：DATA/versions/<ver>/node_modules/… + DATA/config.json */
 function makeData(versions) {

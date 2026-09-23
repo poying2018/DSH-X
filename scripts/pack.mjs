@@ -32,6 +32,57 @@ function run(command, args, cwd = ROOT) {
   if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} failed`)
 }
 
+function capture(command, args, cwd = ROOT) {
+  const result = spawnSync(command, args, { cwd, encoding: 'utf8', windowsHide: true })
+  if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} failed`)
+  return String(result.stdout || '')
+}
+
+/**
+ * 编译 dsh 用的 Rust 主机三元组。
+ *
+ * 决定要不要带 WebView2Loader.dll：MSVC 工具链下 wry 静态链的是
+ * WebView2LoaderStatic.lib，exe 不依赖外部 loader；换成 windows-gnu 工具链
+ * （没有 VS Build Tools 的机器只能这么编）就变成动态依赖，缺这个 DLL 的话
+ * DSH.exe 连窗口都开不出来，报 "error while loading shared libraries"。
+ * 所以按三元组判断，别把 loader 塞进用不到的包里，也别漏给用得到的。
+ */
+function rustHost() {
+  try {
+    return capture('rustc', ['-vV'])
+      .split(/\r?\n/)
+      .find((line) => line.startsWith('host:'))
+      ?.split(':')[1]
+      ?.trim() ?? ''
+  } catch {
+    return ''
+  }
+}
+
+const WEBVIEW2_SDK = '1.0.4191.47'
+
+/** 取官方 WebView2 SDK 里的 x64 loader，缓存到 vendor 下（和 node / Inno 同一套路）。 */
+async function vendorWebView2Loader() {
+  const dir = join(VENDOR, 'webview2')
+  const dll = join(dir, 'WebView2Loader.dll')
+  if (existsSync(dll)) return dll
+  const nupkg = join(VENDOR, `Microsoft.Web.WebView2.${WEBVIEW2_SDK}.nupkg`)
+  await mkdir(VENDOR, { recursive: true })
+  if (!existsSync(nupkg)) {
+    console.log(`下载 WebView2 SDK ${WEBVIEW2_SDK}`)
+    await download(`https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2/${WEBVIEW2_SDK}`, nupkg)
+  }
+  // nupkg 就是个 zip；Expand-Archive 只认 .zip 后缀，所以先换个名字解
+  const zip = `${nupkg}.zip`
+  await cp(nupkg, zip)
+  run('powershell', ['-NoProfile', '-Command', `Expand-Archive -Force '${zip}' '${dir}'`])
+  rmSync(zip, { force: true })
+  const extracted = join(dir, 'runtimes', 'win-x64', 'native', 'WebView2Loader.dll')
+  if (!existsSync(extracted)) throw new Error('WebView2 SDK 里找不到 win-x64 的 WebView2Loader.dll')
+  await cp(extracted, dll)
+  return dll
+}
+
 async function download(url, dest) {
   const res = await fetch(url)
   if (!res.ok) throw new Error(`下载失败 HTTP ${res.status} ${url}`)
@@ -152,6 +203,14 @@ async function assemble() {
   // 这里原本要拷 node_modules（装着 systray2）。托盘搬进 DSH.exe 之后启动器不再依赖任何
   // npm 包，只剩 node 内置模块和同目录的自己人，整份拷贝都省了。
   await copyFile(join(ROOT, 'launcher', 'target', 'release', 'DSH.exe'), join(OUT, 'DSH.exe'))
+  const host = rustHost()
+  if (host.endsWith('-gnu')) {
+    // 见 rustHost()：gnu 工具链编出来的 DSH.exe 动态依赖 WebView2Loader.dll，
+    // 不一起装进包里，用户双击只会得到"起不来"（安装包本身没报错，最容易漏）。
+    const loader = await vendorWebView2Loader()
+    await copyFile(loader, join(OUT, 'WebView2Loader.dll'))
+    console.log(`已随包带上 WebView2Loader.dll（${host} 工具链需要）`)
+  }
   console.log(`已打包到 ${OUT}`)
 }
 
