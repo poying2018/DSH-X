@@ -806,10 +806,18 @@ function profileDir() {
 }
 
 /** dsh 启动参数。 */
-function bootArgs() {
+/**
+ * dsh 的启动参数。
+ *
+ * profile 一律走 `--profile <name>`，不要把名字当位置参数传：`dsh web` 只是
+ * `--profile web` 的别名，而设置页的 profile 下拉列的是 `profiles/` 下的目录名，
+ * 里面 web-desktop / safe / sdk-minimal 这些自建 profile 不是别名——位置参数会被
+ * 当成未知命令，dsh 直接回 "--profile <name> is required"，于是"选了 profile 却起不来"。
+ */
+export function bootArgs(profile = PROFILE_NAME, extraArgs = EXTRA_ARGS) {
   // 额外参数放最后：用户可以用它覆盖 --port 之类（启动器是从 dsh 的输出里读真实地址的，
   // 所以换个端口也不影响管理页拿到的链接）
-  return [PROFILE_NAME, '--host', '127.0.0.1', '--port', '0', '--no-open', ...EXTRA_ARGS]
+  return ['--profile', profile, '--host', '127.0.0.1', '--port', '0', '--no-open', ...extraArgs]
 }
 
 /** dsh 子进程的加载钩子：启动加速 + 会话事件词汇兼容（含 worker 线程那份）。 */
