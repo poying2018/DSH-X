@@ -872,6 +872,8 @@
         <label class="toggle"><span data-i18n="开机自启">开机自启</span><input id="autoStart" type="checkbox" /></label>
         <label class="toggle"><span data-i18n="插件市场">插件市场</span><input id="seedMarket" type="checkbox" /></label>
         <label class="toggle"><span data-i18n="兼容模式">兼容模式</span><input id="autoDisable" type="checkbox" /></label>
+        <label class="toggle"><span data-i18n="页面内选目录">页面内选目录</span><input id="inAppPicker" type="checkbox" /></label>
+        <p class="hint" data-i18n="选工作区时在页面里浏览目录，而不是让内核弹系统对话框（后台启动时弹的框选完回不来）。">选工作区时在页面里浏览目录，而不是让内核弹系统对话框（后台启动时弹的框选完回不来）。</p>
         <details class="advanced">
           <summary data-i18n="高级设置">高级设置</summary>
           <label class="field"><span data-i18n="启动 profile">启动 profile</span><select id="profile"></select></label>
@@ -986,6 +988,8 @@
   "例如：--log-level debug": "e.g. --log-level debug",
   "DSH-X 已退出": "DSH-X has exited",
   "卸载": "Uninstall",
+  "页面内选目录": "Pick folders in-page",
+  "选工作区时在页面里浏览目录，而不是让内核弹系统对话框（后台启动时弹的框选完回不来）。": "Browse folders inside the page instead of letting the kernel open an OS dialog — a dialog from a background process never returns its pick.",
   "停止": "Stop",
   "重试": "Retry",
   "最新": "Latest",
@@ -2129,6 +2133,7 @@
     const autoStartEl = document.getElementById('autoStart')
     const seedMarketEl = document.getElementById('seedMarket')
     const autoDisableEl = document.getElementById('autoDisable')
+    const inAppPickerEl = document.getElementById('inAppPicker')
     const profileEl = document.getElementById('profile')
     const portEl = document.getElementById('port')
     const portHint = document.getElementById('portHint')
@@ -2236,6 +2241,7 @@
       if ('autoStart' in data) autoStartEl.checked = Boolean(data.autoStart)
       if ('seedMarket' in data) seedMarketEl.checked = data.seedMarket !== false
       if ('autoDisablePlugins' in data) autoDisableEl.checked = data.autoDisablePlugins !== false
+      if ('inAppDirectoryPicker' in data) inAppPickerEl.checked = data.inAppDirectoryPicker !== false
     }
 
     function loadSettings() {
@@ -2301,6 +2307,7 @@
           autoStart: autoStartEl.checked,
           seedMarket: seedMarketEl.checked,
           autoDisablePlugins: autoDisableEl.checked,
+          inAppDirectoryPicker: inAppPickerEl.checked,
         })
         fillSettings(data)
         // 界面语言：保存后立刻套用（含插件页的文案）

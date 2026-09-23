@@ -17,6 +17,7 @@ import {
   planPluginRemoval,
   pluginsNamedInFailure,
   prunePluginRows,
+  setDirectoryPickerMode,
   setPluginEnabled,
 } from './plugins.js'
 import {
@@ -647,6 +648,7 @@ async function publicSettings() {
     autoStart: await autoStartEnabled(),
     seedMarket: stored.seedMarket !== false,
     autoDisablePlugins: stored.autoDisablePlugins !== false,
+    inAppDirectoryPicker: stored.inAppDirectoryPicker !== false,
     profile: PROFILE_NAME,
     profiles: listProfiles(),
     // 回显用户填的原文（带引号），不能回显 parse 后的数组，否则含空格的值再存一次就被拆开了
@@ -664,6 +666,20 @@ async function applyDshHome(dir, { migrate = false } = {}) {
     pushLog('插件里的链接是带绝对路径的，启动报解析不到 bundle 时会自动重装 profile 依赖')
   }
   return moved
+}
+
+/**
+ * 把"用哪种方式选目录"落到 profile 的补丁层上。
+ *
+ * dsh 自己按 bindHost/平台判断，Windows + 127.0.0.1 会选 native：系统文件夹对话框由
+ * 内核弹出。可内核是 DSH.exe 用 CREATE_NO_WINDOW 拉起来的子进程，对话框选完回不到
+ * 页面，表现就是"点了没反应 / 选完工作区弹回未选择"。所以默认由启动器把后端改成
+ * 应用内目录浏览；关掉开关就交回 dsh 自己判断。
+ */
+function applyPickerMode(stored) {
+  const result = setDirectoryPickerMode(profileDir(), stored.inAppDirectoryPicker !== false ? 'browse' : 'auto')
+  if (result.changed) pushLog(`选目录改用${result.mode === 'browse' ? '应用内目录浏览' : '系统对话框（交回 dsh 判断）'}`)
+  return result
 }
 
 async function saveManagerSettings(body) {
@@ -697,6 +713,7 @@ async function saveManagerSettings(body) {
     autoStart: Boolean(body.autoStart),
     seedMarket: body.seedMarket !== false,
     autoDisablePlugins: body.autoDisablePlugins !== false,
+    ...('inAppDirectoryPicker' in body ? { inAppDirectoryPicker: Boolean(body.inAppDirectoryPicker) } : {}),
   })
   try {
     await setAutoStart(stored.autoStart)
@@ -710,6 +727,8 @@ async function saveManagerSettings(body) {
     pushLog(`启动 profile 改为 ${stored.profile}`)
     PROFILE_NAME = stored.profile
   }
+  // 目录选择后端要先落到位：dsh 一起来就会按补丁层挂它的 picker，晚改就得等下次启动
+  applyPickerMode(stored)
   if (stored.seedMarket) {
     const versions = listedVersions(await loadConfig())
     if (versions[0] && !pluginBusy) await seedMarket(versions[0])
@@ -2134,6 +2153,8 @@ export async function startServer() {
   CONFIG = join(DATA, 'config.json')
   DSH_HOME = resolveDshHome()
   await mkdir(DATA, { recursive: true })
+  // 开机就把目录选择后端摆好：dsh 一起来就按补丁层挂它的 picker，等首次保存设置才改就晚了
+  applyPickerMode(loadSettingsSync())
   cleanStaleUpdates()
   // 默认 16KB 的请求头上限会被浏览器里堆积的 cookie 顶爆（HTTP 431），放宽到 128KB
   const handler = async (req, res) => {

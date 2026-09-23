@@ -359,6 +359,84 @@ export function prunePluginRows(patchPath, ids) {
   return { changed: true, ids }
 }
 
+/**
+ * 目录选择后端的补丁行。
+ *
+ * dsh 的 `directory-picker-auto` 在 win32 + 绑定 127.0.0.1 时挂 native 后端：系统
+ * 文件夹对话框由内核进程弹出，而内核是启动器用 CREATE_NO_WINDOW 拉起来的子进程，
+ * 选完目录回不到页面——表现就是"选工作区点了没反应/选完弹回未选择"。
+ * 这里把 auto 那行停掉，改成显式插 browse 那一对（host + client 两面），
+ * 目录浏览就在页面里走了。
+ */
+export const PICKER_AUTO_ROW = 'directory-picker'
+export const PICKER_BROWSE_ROWS = [
+  { id: 'directory-picker-host', name: '@deepseek-ai/dsh-host-directory-picker-browse' },
+  { id: 'directory-picker-ui', name: '@deepseek-ai/dsh-client-ui-directory-picker-browse' },
+]
+
+const pickerDisableRow = `- id: ${PICKER_AUTO_ROW}\n  disabled: true\n`
+const pickerInsertBlock = `- insert:\n${PICKER_BROWSE_ROWS.map((row) => `    - id: ${row.id}\n      name: '${row.name}'\n`).join('')}`
+
+/** 纯文本变换：把补丁层调成"用应用内目录浏览"（browse）或"交回 dsh 自己判断"（auto）。 */
+export function applyPickerMode(text, mode) {
+  let body = String(text ?? '')
+  // 先清掉本模块写过的那几行，再按目标模式重写，保证重复调用结果一致
+  body = removeDisableBlock(body, PICKER_AUTO_ROW)
+  body = removeInsertRows(body, PICKER_BROWSE_ROWS.map((row) => row.id))
+  // 空列表占位只在该层真的空着时才有意义（ensurePlaceholder 会在清空时补回来）
+  body = body.split('\n').filter((line) => line.trim() !== '[]').join('\n')
+  if (mode === 'browse') {
+    const head = body.endsWith('\n') || body === '' ? body : `${body}\n`
+    body = `${head}${pickerDisableRow}${pickerInsertBlock}`
+  }
+  const done = ensurePlaceholder(body)
+  // 来回切一次不该顺手吃掉行尾换行——那会让"改回去了"其实是个有差异的写盘
+  return done === '' || done.endsWith('\n') ? done : `${done}\n`
+}
+
+/** 删掉 `- insert:` 块里属于我们的那几条（按条目整块删，别只删 id 行留下 name 行）。 */
+function removeInsertRows(text, ids) {
+  const wanted = new Set(ids)
+  const lines = String(text ?? '').split('\n')
+  const kept = []
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]
+    if (!/^- insert:\s*$/.test(line)) {
+      kept.push(line)
+      continue
+    }
+    let end = index + 1
+    while (end < lines.length && !/^- /.test(lines[end])) end += 1
+    // 块里一条条目 = 一个 4 空格缩进的 "- " 行 + 它后面那些同条目的键行
+    const entries = []
+    let current = null
+    for (const row of lines.slice(index + 1, end)) {
+      if (/^ {4}- /.test(row)) current = [row], entries.push(current)
+      else if (current) current.push(row)
+      else if (row.trim() !== '') current = [row], entries.push(current)
+    }
+    const survivors = entries.filter((entry) => {
+      const match = /^ {4}- id:\s*['"]?([A-Za-z0-9_.-]+)['"]?\s*$/.exec(entry[0] ?? '')
+      return !(match && wanted.has(match[1]))
+    })
+    // 块空了就整块丢掉，留个光秃秃的 `- insert:` 是给 YAML 添堵
+    if (survivors.length) kept.push(line, ...survivors.flat())
+    index = end - 1
+  }
+  return kept.join('\n')
+}
+
+/** 把 profile 的补丁层切到指定目录选择后端，返回是否改动。 */
+export function setDirectoryPickerMode(profileDir, mode) {
+  const patchPath = patchPathOf(profileDir)
+  const current = readPatchState(patchPath).text
+  const next = applyPickerMode(current, mode)
+  if (next === current) return { changed: false, mode }
+  backupOnce(patchPath)
+  writeFileSync(patchPath, next)
+  return { changed: true, mode }
+}
+
 /** 找到某条 loader 行属于哪个已装插件（找不到返回空串，例如传递挂载的行）。 */export function ownerOfRow(profileDir, rowId) {
   try {
     const manifest = JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8'))

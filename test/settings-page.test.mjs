@@ -81,6 +81,18 @@ test('保存时把两个目录和各自的迁移意愿一起提交，并回显�
   assert.match(html, /\{ dir: data\.dshHome, count: data\.migratedHome\.length \}/)
 })
 
+test('「页面内选目录」开关接好线（默认开）', () => {
+  assert.match(html, /<label class="toggle"><span[^>]*>页面内选目录<\/span><input id="inAppPicker" type="checkbox" \/><\/label>/)
+  assert.match(html, /if \('inAppDirectoryPicker' in data\) inAppPickerEl\.checked = data\.inAppDirectoryPicker !== false/)
+  assert.match(html, /inAppDirectoryPicker: inAppPickerEl\.checked,/, '保存时提交')
+  // 提示行要讲清为什么要换后端，别留个看不懂的开关
+  assert.match(html, /data-i18n="选工作区时在页面里浏览目录[^"]*后台启动时弹的框选完回不来/)
+  const dictionary = /const EN = \{([\s\S]*?)\n    \}/.exec(html)?.[1] ?? ''
+  for (const key of ['页面内选目录', '选工作区时在页面里浏览目录，而不是让内核弹系统对话框（后台启动时弹的框选完回不来）。']) {
+    assert.ok(dictionary.includes(`"${key}": `), `缺英文词条：${key}`)
+  }
+})
+
 test('内联脚本仍能解析', () => {
   // 只编译不运行：语法坏了这里就炸，运行时的行为靠上面的结构断言看住
   new vm.Script(inlineScript())

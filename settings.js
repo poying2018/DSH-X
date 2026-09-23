@@ -67,6 +67,9 @@ export const DEFAULTS = {
   seedMarket: true,
   // 启动失败时按错误点名自动禁用问题插件（兼容模式），再重试
   autoDisablePlugins: true,
+  // 选工作区时用应用内的目录浏览器，而不是让内核弹系统对话框
+  // （内核是启动器用 CREATE_NO_WINDOW 拉起来的，系统弹窗选完回不到页面）
+  inAppDirectoryPicker: true,
   // 用户在更新弹窗里点过「不更新」的版本 { dsh?, self? }：同一个版本不再提示
   skippedUpdate: {},
 }
@@ -279,6 +282,7 @@ export async function saveSettings(patch) {
   merged.autoStart = Boolean(merged.autoStart)
   merged.seedMarket = merged.seedMarket !== false
   merged.autoDisablePlugins = merged.autoDisablePlugins !== false
+  merged.inAppDirectoryPicker = merged.inAppDirectoryPicker !== false
   merged.skippedUpdate = normalizeSkippedUpdate(merged.skippedUpdate)
   // 已废弃的 AI 修复配置：清掉历史文件里的残留字段
   for (const key of ['aiRepair', 'aiModel', 'aiBaseURL', 'aiApiKey', 'aiMaxRounds', 'aiAllowDestructive']) {
