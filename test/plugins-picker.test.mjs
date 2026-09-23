@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -49,4 +49,12 @@ test('写盘版：真的改文件并留 .bak，第二次调用不再动', () => 
   assert.equal(readFileSync(join(profile, 'cordis.patch.yml.bak'), 'utf8').trim(), '[]')
   assert.equal(setDirectoryPickerMode(profile, 'browse').changed, false)
   assert.deepEqual(readPatchState(join(profile, 'cordis.patch.yml')).disables, ['directory-picker'])
+})
+
+test('profile 目录还不存在时也要写得进去（新机器首次启动前）', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-picker-fresh-'))
+  const profile = join(dir, 'profiles', 'web')
+  assert.equal(setDirectoryPickerMode(profile, 'browse').changed, true, '不能因为目录不存在就抛')
+  assert.ok(readFileSync(join(profile, 'cordis.patch.yml'), 'utf8').includes(INSERT_BLOCK))
+  assert.ok(!existsSync(`${join(profile, 'cordis.patch.yml')}.bak`), '原本没文件就不该造出 .bak')
 })

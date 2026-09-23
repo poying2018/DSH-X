@@ -10,8 +10,8 @@
  * - 删掉最后一行后恢复模板的 `[]` 占位，否则整个 profile 起不来；
  * - 官方包（@deepseek-ai/*）与市场自管行（mkt-/client-）不提供开关。
  */
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 
 const ROW_ID_RE = /^[A-Za-z0-9_.-]+$/
 /** 官方组件：关掉任何一条都可能让 dsh 起不来。 */
@@ -432,6 +432,9 @@ export function setDirectoryPickerMode(profileDir, mode) {
   const current = readPatchState(patchPath).text
   const next = applyPickerMode(current, mode)
   if (next === current) return { changed: false, mode }
+  // profile 目录可能是 dsh 首次启动才会建的：这里要先建好再写，
+  // 否则启动器一开机就写不进去（新机器上直接抛 ENOENT 把启动干掉）。
+  mkdirSync(dirname(patchPath), { recursive: true })
   backupOnce(patchPath)
   writeFileSync(patchPath, next)
   return { changed: true, mode }
