@@ -88,6 +88,9 @@ Filename: "{cmd}"; Parameters: "/c ping -n 3 127.0.0.1 > nul & del /f /q ""{srce
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\node_modules"
+; lang.txt 是 [Code] 在安装后写进去的（记录安装语言），不在 [Files] 清单里，
+; Inno 不认识它，卸载完会在 {app} 留一个孤儿文件——实测过，所以在这里点名删掉。
+Type: files; Name: "{app}\lang.txt"
 
 [Code]
 // 静默安装（启动器就是用 /silent 拉起安装程序的）不显示任何向导页面，带 postinstall 的

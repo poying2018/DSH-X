@@ -168,8 +168,21 @@ export function safeDataDir(dir) {
   return resolve(trimmed)
 }
 
-export function fallbackDataDir() {
-  const local = join(ROOT, 'data')
+/**
+ * 版本目录迁移计划：目标目录里已经有同名版本的算冲突。
+ *
+ * 冲突一律不覆盖——一个版本几百 MB，盖错了没法回滚，让用户自己先清一头。
+ */
+export function planVersionMigration(installed, existing) {
+  const taken = new Set(existing ?? [])
+  const names = [...(installed ?? [])].sort()
+  return {
+    movable: names.filter((name) => !taken.has(name)),
+    blocked: names.filter((name) => taken.has(name)),
+  }
+}
+
+export function fallbackDataDir() {  const local = join(ROOT, 'data')
   if (hasInstall(local)) return local
   if (process.env.APPDATA) {
     const roaming = join(process.env.APPDATA, 'DSH', 'data')

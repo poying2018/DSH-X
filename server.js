@@ -1,6 +1,6 @@
 import { execFile, spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, cp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { basename, delimiter, dirname, join } from 'node:path'
@@ -13,7 +13,10 @@ import {
   ownerOfRow,
   parseFailedRows,
   parseUnresolvedBundles,
+  patchPathOf,
+  planPluginRemoval,
   pluginsNamedInFailure,
+  prunePluginRows,
   setPluginEnabled,
 } from './plugins.js'
 import {
@@ -24,6 +27,7 @@ import {
   loadSettings,
   loadSettingsSync,
   parseArgs,
+  planVersionMigration,
   resolveDataDir,
   resolvePort,
   resolveProfile,
@@ -516,12 +520,77 @@ async function snapshot() {
   }
 }
 
-async function applyDataDir(dir) {
+/** 同盘 rename，跨盘（EXDEV）退化成复制后删源。目录和文件都走这条。 */
+export async function moveEntry(from, to) {
+  try {
+    await rename(from, to)
+  } catch (error) {
+    if (error?.code !== 'EXDEV') throw error
+    await cp(from, to, { recursive: true })
+    await rm(from, { recursive: true, force: true })
+  }
+}
+
+/**
+ * 把旧版本目录里的已装版本搬到新目录（含 config.json）。
+ *
+ * 先整体判冲突再动手：一个版本几百 MB，搬到一半才发现撞名就回滚不干净了。
+ * 真的搬失败（盘掉线、目标被占用）时把已经搬走的挨个放回源目录，源目录回到原样，
+ * 抛出人话。调用方在这之前不会改 DATA，所以管理页看到的状态和磁盘是一致的。
+ * `move` 是留出来的测试缝：回滚那条路径需要一次可控的失败。
+ * 返回搬成功的版本名数组。
+ */
+export async function migrateVersions(from, to, { move = moveEntry } = {}) {
+  const source = join(from, 'versions')
+  if (!existsSync(source)) return []
+  const installed = readdirSync(source, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+  const target = join(to, 'versions')
+  const existing = existsSync(target)
+    ? readdirSync(target, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name)
+    : []
+  const plan = planVersionMigration(installed, existing)
+  if (plan.blocked.length) {
+    throw new Error(`新目录里已存在 ${plan.blocked.join('、')}，请先清掉再搬`)
+  }
+  const moved = []
+  try {
+    await mkdir(target, { recursive: true })
+    for (const name of plan.movable) {
+      await move(join(source, name), join(target, name))
+      moved.push(name)
+      pushLog(`已搬走版本 ${name}`)
+    }
+    // config.json 记的就是这个目录装了哪些版本，跟着走；新目录已有自己的就不覆盖
+    const sourceConfig = join(from, 'config.json')
+    if (existsSync(sourceConfig) && !existsSync(join(to, 'config.json'))) {
+      await move(sourceConfig, join(to, 'config.json'))
+    }
+  } catch (error) {
+    for (const name of moved.slice().reverse()) {
+      await move(join(target, name), join(source, name)).catch(() => {})
+    }
+    pushLog(`迁移失败（已搬回的 ${moved.join('、') || '无'} 放回原目录）: ${error instanceof Error ? error.message : error}`)
+    const rolled = moved.length ? `已搬走的 ${moved.join('、')} 已放回原目录，` : ''
+    throw new Error(`版本迁移失败，${rolled}版本目录保持不动：${error instanceof Error ? error.message : error}`)
+  }
+  return moved
+}
+
+/**
+ * 换版本目录。返回搬走的版本名数组；没让迁移（或目录没变）时返回 null，
+ * 让调用方分得清"搬了但没东西搬"和"压根没打算搬"。
+ */
+async function applyDataDir(dir, { migrate = false } = {}) {
   // 先确认真的能写（含已存在但只读的目录），失败就带着人话抛出，DATA 保持不变
   await ensureWritableDir(dir)
+  // 迁移也一样要在改 DATA 之前完成：搬失败抛出时 DATA 还是旧目录，两边对得上
+  const moved = migrate && dir !== DATA ? await migrateVersions(DATA, dir) : null
   DATA = dir
   CONFIG = join(DATA, 'config.json')
   pushLog(`版本目录 ${DATA}`)
+  return moved
 }
 
 async function publicSettings() {
@@ -545,11 +614,14 @@ async function publicSettings() {
 }
 
 async function saveManagerSettings(body) {
+  let migrated = null
   if (body.dataDir) {
     const dir = safeDataDir(body.dataDir)
     if (dir !== DATA && current) throw new Error('请先停止再改版本目录')
     if (installing) throw new Error('正在安装，稍后再改版本目录')
-    await applyDataDir(dir)
+    // 迁移默认开：改目录的人要的通常就是"换到大盘"，把几百 MB 留在旧盘是意外结果。
+    // 显式传 migrateVersions:false 才是只换指针（旧目录里的版本留在原地）。
+    migrated = await applyDataDir(dir, { migrate: body.migrateVersions !== false })
   }
   const stored = await saveSettings({
     dataDir: DATA,
@@ -578,7 +650,10 @@ async function saveManagerSettings(body) {
     if (versions[0] && !pluginBusy) await seedMarket(versions[0])
   }
   await emitState()
-  return publicSettings()
+  const out = await publicSettings()
+  // 把这次真正搬走的版本回给页面，提示行才能说清"搬了"还是"没搬"
+  if (migrated) out.migrated = migrated
+  return out
 }
 
 async function emitState() {
@@ -1115,6 +1190,40 @@ async function addPlugin(version, spec) {
       }
     }
     pushLog(`${pkg} 已在 web profile`)
+  } finally {
+    pluginBusy = false
+  }
+}
+
+/**
+ * 卸载一个插件：跑 `dsh plugin remove`（透传 pnpm），再把该包留在用户补丁层里的
+ * 停用行清掉。
+ *
+ * 判定和清理分开做（planPluginRemoval / prunePluginRows 都在 plugins.js，可单测），
+ * 这里只管编排：删包要在能跑 dsh 的前提下才有——一台机器把版本全卸了就没了 pnpm 的
+ * 执行入口，这时宁可明说也别去手撕 node_modules。
+ */
+async function removePlugin(name) {
+  const dir = profileDir()
+  // 先判定：包名合法性和能不能删，都在 pluginBusy 之前问清楚，被拒时不留忙标志
+  const plan = planPluginRemoval(dir, name)
+  if (!plan.removable) throw new Error(plan.reason)
+  const versions = listedVersions(await loadConfig())
+  if (!versions.length) throw new Error('还没有可用的 dsh 版本，跑不了卸载命令（先装一个版本）')
+  const ver = safeVersion(versions[0])
+  if (pluginBusy) throw new Error('正在装/卸插件')
+  if (!existsSync(binPath(ver))) throw new Error('找不到官方入口 lib/bin.js')
+
+  pluginBusy = true
+  try {
+    await mkdir(homeDir(), { recursive: true })
+    await ensureProfileNpmrc()
+    if (current?.status === 'running') pushLog('dsh 正在运行：整包卸载要重启后才彻底生效')
+    pushLog(`卸载插件 ${name}（加载行 ${plan.ids.join('、')}）`)
+    await runPluginCommand(ver, ['remove', '-w', name], `dsh plugin remove ${name}`)
+    const pruned = prunePluginRows(patchPathOf(dir), plan.ids)
+    pushLog(`${name} 已卸载${pruned.changed ? '，顺手清掉了它的停用行' : ''}`)
+    return { ok: true, name, prunedRows: pruned.changed ? pruned.ids : [] }
   } finally {
     pluginBusy = false
   }
@@ -1891,6 +2000,11 @@ async function handleApi(req, res, url) {
     const result = setPluginEnabled(profileDir(), name, enabled)
     pushLog(`插件 ${name} → ${enabled ? '启用' : '禁用'}${result.changed ? '' : '（无变化）'}`)
     send(res, 200, { ok: true, changed: result.changed, ...listPlugins(profileDir()), profile: PROFILE_NAME, autoFix: lastAutoFix })
+    return
+  }
+  if (req.method === 'POST' && url.pathname === '/api/plugins/remove') {
+    const result = await removePlugin(String(body.name || ''))
+    send(res, 200, { ...result, ...listPlugins(profileDir()), profile: PROFILE_NAME, autoFix: lastAutoFix })
     return
   }
   if (req.method === 'POST' && url.pathname === '/api/wake') {

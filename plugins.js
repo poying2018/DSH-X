@@ -143,6 +143,7 @@ export function listPlugins(profileDir) {
     const ids = packageRowIds(profileDir, name)
     const official = PROTECTED_PACKAGE_RE.test(name)
     const marketOwned = ids.length > 0 && ids.every((id) => MARKET_ROW_RE.test(id))
+    const ownIds = ids.filter((id) => !MARKET_ROW_RE.test(id))
     const disabled = ids.some((id) => state.disables.includes(id))
     let toggleable = true
     let reason = ''
@@ -156,7 +157,25 @@ export function listPlugins(profileDir) {
       toggleable = false
       reason = '市场自管行，不提供开关'
     }
-    return { name, version: packageVersion(profileDir, name), ids, enabled: !disabled, toggleable, reason, official }
+    // 能不能整包卸载、以及卸载后要清掉哪些行：判定只在这一处做，页面和 planPluginRemoval 都读它
+    const removal = official
+      ? { removable: false, reason: '官方组件不提供卸载' }
+      : !ids.length
+        ? { removable: false, reason: '客户端插件由插件市场管理，请到市场里卸载' }
+        : !ownIds.length
+          ? { removable: false, reason: '加载行全部由插件市场自管，在这里卸载会留下孤儿行，请到市场里卸载' }
+          : { removable: true, reason: '' }
+    return {
+      name,
+      version: packageVersion(profileDir, name),
+      ids,
+      enabled: !disabled,
+      toggleable,
+      reason,
+      official,
+      removable: removal.removable,
+      removeReason: removal.reason,
+    }
   })
   return { profileDir, patchPath, plugins, disables: state.disables }
 }
@@ -304,8 +323,43 @@ export function setPluginEnabled(profileDir, packageName, enabled) {
   return { ok: true, changed, ids: targets }
 }
 
-/** 找到某条 loader 行属于哪个已装插件（找不到返回空串，例如传递挂载的行）。 */
-export function ownerOfRow(profileDir, rowId) {
+/**
+ * 卸载前的判定：这个包能不能由启动器删、删完要顺手清掉哪些停用行。
+ *
+ * 判定来自 listPlugins 的 removable/removeReason（页面置灰用的是同一份），这里只补两件事：
+ * 包名要在清单里，以及把"该包自己的加载行"报出去。行 id 必须在包被删掉**之前**拿——
+ * `packageRowIds` 读的是 node_modules 里的包，包一没就查不到了。市场自管行
+ * （mkt-/client-）不进这个清单：整包 pnpm remove 会把它们一起带走，那是市场自己的账。
+ */
+export function planPluginRemoval(profileDir, packageName) {
+  const entry = listPlugins(profileDir).plugins.find((plugin) => plugin.name === packageName)
+  if (!entry) throw new Error(`${packageName} 不在当前 profile 的已装插件里`)
+  if (!entry.removable) return { removable: false, reason: entry.removeReason }
+  return { removable: true, ids: entry.ids.filter((id) => !MARKET_ROW_RE.test(id)) }
+}
+
+/**
+ * 卸载之后清掉该包留在用户补丁层里的停用行。
+ *
+ * 包没了还留着 `- id: X / disabled: true` 不影响启动（那行本来就不存在了），但会一直
+ * 挂在禁用清单里让人以为还有个插件被停用着。没有可清的就一个字节都不写，也不留 .bak。
+ */
+export function prunePluginRows(patchPath, ids) {
+  const state = readPatchState(patchPath)
+  let text = state.text
+  for (const id of ids ?? []) {
+    if (!ROW_ID_RE.test(id)) continue
+    const next = removeDisableBlock(text, id)
+    if (next === text) continue
+    text = next
+  }
+  if (text === state.text) return { changed: false, ids: [] }
+  backupOnce(patchPath)
+  writeFileSync(patchPath, ensurePlaceholder(text))
+  return { changed: true, ids }
+}
+
+/** 找到某条 loader 行属于哪个已装插件（找不到返回空串，例如传递挂载的行）。 */export function ownerOfRow(profileDir, rowId) {
   try {
     const manifest = JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8'))
     for (const name of Object.keys(manifest?.dependencies ?? {})) {

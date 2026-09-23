@@ -40,22 +40,37 @@ test('读到的设置填进输入框，并说明插件/profile 位置与迁移�
   assert.match(
     html,
     /dataDirHint\.textContent = t\('dsh 各版本装在这里[\s\S]{0,80}?\{home\}[\s\S]{0,40}?home: data\.dshHome/,
-    '提示行说明各版本装在这里，并把 dsh 家目录填进 {home}',
+    '提示行说明各版本装在这里，并把 dsh 家目录填进去',
   )
   assert.match(html, /插件和 profile 仍在/)
-  assert.match(html, /已安装的版本不会自动迁移/)
+  assert.match(html, /不受影响/, '插件/profile 不跟着版本目录搬家，要说清')
 })
 
-test('改过目录的保存提示说明立即生效和不迁移', () => {
+test('改过目录且旧目录有已装版本时，问一句要不要一起搬', () => {
+  // 只有"目录改了" + "旧目录里确实有版本"两个条件都成立才出现这一行，否则是白噪音
+  assert.match(html, /<label class="toggle" id="migrateRow" hidden>/, '默认隐藏')
+  assert.match(html, /<input id="migrateVersions" type="checkbox" checked/, '默认搬过去')
+  // 数量取自动态 /api/state（/api/settings 里没有版本列表），拉不到就不猜
+  assert.match(html, /const snapshot = await getJson\('\/api\/state'\)/)
+  assert.match(html, /const show = edited && count > 0/)
+  assert.match(html, /migrateRowEl\.hidden = !show/)
+  assert.match(html, /dataDirEl\.oninput = refreshMigrateRow/, '手打路径也要立刻出提示')
+  // 装完/卸完版本后数字得跟着变
+  assert.match(html, /maybeLaunch\(\)\s*\n\s*\/\/[^\n]*\n\s*refreshMigrateRow\(\)/, 'applyState 里刷新一次')
+})
+
+test('保存时把迁移意愿一起提交，并回显搬了几个', () => {
+  assert.match(html, /\.\.\.\(dirBefore \? \{ dataDir: dirBefore \} : \{\}\)/)
+  // 只在目录真的改了时带 migrateVersions：同目录保存不该被当成"不迁移"
+  assert.match(html, /migrateVersions: migrateEl\.checked/)
+  assert.match(html, /Array\.isArray\(data\.migrated\) && data\.migrated\.length/, '搬成功：报数量')
+  assert.match(html, /个已装版本一起搬过去了/, '搬成功地点名"一起搬过去了"')
+  assert.match(html, /（旧目录里没有已装版本，没什么可搬）/, '没东西可搬也要说清，别让人以为静默失败了')
+  assert.match(html, /旧目录里的版本没有搬/, '只改目录：明说版本还在旧目录')
   // 末尾斜杠不该误判成"改过"：用户常带着 '\' 保存
   assert.match(html, /const normDir = \(value\) => String\(value \?\? ''\)\.trim\(\)\.replace\(\/\[\\\\\/\]\+\$\/, ''\)/)
-  assert.match(html, /normDir\(data\.dataDir\) !== normDir\(dirBefore\)/)
   // 新目录名用 {dir} 占位传进去，别只断言写死了半句
-  assert.match(
-    html,
-    /t\('已保存。版本目录已改为 \{dir\}（立即生效）[\s\S]{0,60}?\{ dir: data\.dataDir \}\)/,
-    '提示里用 {dir} 占位，并把新目录填进去',
-  )
+  assert.match(html, /\{ dir: data\.dataDir, count: data\.migrated\.length \}/, '数量也是占位传进去的')
 })
 
 test('内联脚本仍能解析', () => {

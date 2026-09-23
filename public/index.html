@@ -611,6 +611,8 @@
       margin-right: -10px;
     }
     .plugin-row {
+      /* 行是容器：左边开关（label），右边卸载按钮。原先 label 自己就是行，卸载按钮放进去会被算成开关的一部分 */
+      display: flex;
       margin: 0;
       padding: 13px 8px;
       border-bottom: 1px solid var(--line);
@@ -619,6 +621,8 @@
       border-radius: 10px;
       transition: background 0.12s ease;
     }
+    .plugin-row .toggle { flex: 1 1 auto; min-width: 0; margin: 0; }
+    .plugin-remove { flex: 0 0 auto; }
     .plugin-row:hover { background: var(--accent-soft); }
     .plugin-row:last-child { border-bottom: 0; }
     .plugin-row.off .plugin-name { color: var(--muted); font-weight: 500; }
@@ -888,6 +892,11 @@
             </span>
           </label>
           <p class="hint" id="dataDirHint"></p>
+          <label class="toggle" id="migrateRow" hidden>
+            <span data-i18n="把旧目录里已装的版本一起搬过去">把旧目录里已装的版本一起搬过去</span>
+            <input id="migrateVersions" type="checkbox" checked />
+          </label>
+          <p class="hint" id="migrateHint"></p>
         </details>
         <button class="primary" id="saveSettings" type="button" style="margin-top: 22px" data-i18n="保存">保存</button>
         <p class="hint" id="settingsHint"></p>
@@ -1018,9 +1027,22 @@
   "卸载 {version}？这是系统里的 DSH，会从本机移除。插件和数据会保留。": "Uninstall {version}? This is the system DSH and will be removed from this machine. Plugins and data are kept.",
   "正在更新到 {latest}": "Updating to {latest}",
   "已保存。重启启动器后管理页改到 {port} 端口。": "Saved. The manager moves to port {port} after a restart.",
-  "已保存。版本目录已改为 {dir}（立即生效）；已安装的版本不会自动迁移，需要就手动复制过去。": "Saved. The version directory is now {dir} (effective immediately); installed versions are not moved automatically.",
+  "已保存。版本目录已改为 {dir}；旧目录里的版本没有搬，需要就手动复制过去。": "Saved. The version directory is now {dir}; the versions in the old directory were not moved, copy them over if you need them.",
+  "已保存。版本目录已改为 {dir}，{count} 个已装版本一起搬过去了。": "Saved. The version directory is now {dir}, and {count} installed versions moved with it.",
+  "已保存。版本目录已改为 {dir}（旧目录里没有已装版本，没什么可搬）。": "Saved. The version directory is now {dir} (the old directory had no installed versions to move).",
+  "旧目录里有 {count} 个已装版本（每个几百 MB）。搬过去后旧目录就空了；只改目录的话得自己复制。": "The old directory holds {count} installed versions (a few hundred MB each). Moving them leaves it empty; if you only change the directory you have to copy them yourself.",
+  "读不到已装版本数量，先按不迁移处理。": "Could not read the installed version count — treating this as no migration.",
+  "把旧目录里已装的版本一起搬过去": "Move the installed versions along",
   "当前实际监听 {live} 端口（配置的 {port} 被别的程序占用，启动时自动顺延）。": "Actually listening on {live} (port {port} was taken, so the launcher moved on).",
-  "dsh 各版本装在这里（几百 MB 一个）；插件和 profile 仍在 {home}，已装版本不自动迁移。": "dsh versions go here (a few hundred MB each); plugins and profiles stay in {home}, and installed versions are not moved.",
+  "dsh 各版本装在这里（几百 MB 一个）；插件和 profile 仍在 {home}，不受影响。": "dsh versions go here (a few hundred MB each); plugins and profiles stay in {home} and are unaffected.",
+  "要卸载 {name} 吗？这是整包删除，不是停用；装回来要去插件市场重新安装。": "Uninstall {name}? This removes the whole package, not just disables it — you would have to reinstall it from the marketplace.",
+  "正在卸载 {name}…": "Uninstalling {name}…",
+  "{name} 已卸载。": "{name} uninstalled.",
+  "{name} 已卸载，顺手清掉了它的停用行。": "{name} uninstalled, and its leftover disabled rows were cleaned up.",
+  "卸载这个插件（整包删掉，不只是停用）": "Uninstall this plugin (removes the package, not just disables it)",
+  "官方组件不提供卸载": "Official components cannot be uninstalled here",
+  "客户端插件由插件市场管理，请到市场里卸载": "Client plugin managed by the marketplace — uninstall it there",
+  "加载行全部由插件市场自管，在这里卸载会留下孤儿行，请到市场里卸载": "All loader rows are marketplace-managed; uninstalling here would orphan them — uninstall it there",
   "上次启动自动禁用了：{names}（认为没问题可在上面重新打开）。": "Disabled at the last start: {names} (turn them back on here if that was wrong).",
   "启动时自动禁用了：{names}（插件页可恢复）": "Disabled at start: {names} (restore them on the Plugins page)",
   "⚠ 页面自检：{failed}/{total} 个插件包加载失败": "⚠ Page self-check: {failed}/{total} client plugin bundles failed to load",
@@ -1771,6 +1793,8 @@
       if (!userPicked) picked = preferredPick()
       render()
       maybeLaunch()
+      // 装/卸版本会改"旧目录里有几个版本"，设置页那行提示得跟着刷新
+      refreshMigrateRow()
     }
 
     // 托盘退出后这个页面就没用了。规范上「只有一个历史条目的顶层页面」允许脚本
@@ -2094,8 +2118,35 @@
     const pickDirEl = document.getElementById('pickDir')
     const dataDirEl = document.getElementById('dataDir')
     const dataDirHint = document.getElementById('dataDirHint')
+    const migrateRowEl = document.getElementById('migrateRow')
+    const migrateEl = document.getElementById('migrateVersions')
+    const migrateHint = document.getElementById('migrateHint')
     const settingsHint = document.getElementById('settingsHint')
     const saveSettingsEl = document.getElementById('saveSettings')
+    // 服务端当前真正在用的版本目录，用来判断"用户改过了没有"
+    let liveDataDir = ''
+
+    // 只在"目录改过了"且"旧目录里确实有版本"时，才问要不要一起搬。
+    // 数量取自动态 /api/state：/api/settings 走 publicSettings()，里面没有版本列表。
+    async function refreshMigrateRow() {
+      const edited = Boolean(dataDirEl.value.trim()) && normDir(dataDirEl.value) !== normDir(liveDataDir)
+      let count = 0
+      if (edited) {
+        try {
+          const snapshot = await getJson('/api/state')
+          count = (Array.isArray(snapshot?.versions) ? snapshot.versions : []).length
+        } catch {
+          migrateRowEl.hidden = true
+          migrateHint.textContent = t('读不到已装版本数量，先按不迁移处理。')
+          return
+        }
+      }
+      const show = edited && count > 0
+      migrateRowEl.hidden = !show
+      migrateHint.textContent = show
+        ? t('旧目录里有 {count} 个已装版本（每个几百 MB）。搬过去后旧目录就空了；只改目录的话得自己复制。', { count })
+        : ''
+    }
 
     function fillSettings(data) {
       if ('args' in data) argsEl.value = String(data.args ?? '')
@@ -2118,8 +2169,10 @@
       }
       if ('dataDir' in data) {
         dataDirEl.value = String(data.dataDir ?? '')
-        // 一次说清三件事：这是什么的目录、插件和 profile 不归它管、已装的版本不会搬家
-        dataDirHint.textContent = t('dsh 各版本装在这里（几百 MB 一个）；插件和 profile 仍在 {home}，已装版本不自动迁移。', { home: data.dshHome || '~/.dsh' })
+        liveDataDir = String(data.dataDir ?? '')
+        // 一次说清两件事：这是什么的目录、插件和 profile 不归它管（搬家只搬版本）
+        dataDirHint.textContent = t('dsh 各版本装在这里（几百 MB 一个）；插件和 profile 仍在 {home}，不受影响。', { home: data.dshHome || '~/.dsh' })
+        refreshMigrateRow()
       }
       if ('autoStart' in data) autoStartEl.checked = Boolean(data.autoStart)
       if ('seedMarket' in data) seedMarketEl.checked = data.seedMarket !== false
@@ -2135,6 +2188,9 @@
     // 比较目录时忽略末尾斜杠：用户常带着 '\' 保存，与 resolve 后的值比会误判成改过
     const normDir = (value) => String(value ?? '').trim().replace(/[\\/]+$/, '')
 
+    dataDirEl.oninput = refreshMigrateRow
+    dataDirEl.onchange = refreshMigrateRow
+
     pickDirEl.onclick = async () => {
       pickDirEl.disabled = true
       const before = dataDirHint.textContent
@@ -2144,6 +2200,7 @@
         if (data.path) {
           dataDirEl.value = data.path
           dataDirHint.textContent = t('已选好目录，别忘了点「保存」让它生效。')
+          refreshMigrateRow()
         } else {
           dataDirHint.textContent = data.error ? t('没选成：{error}', { error: data.error }) : before
         }
@@ -2158,6 +2215,8 @@
       saveSettingsEl.disabled = true
       settingsHint.textContent = t('正在保存…')
       const dirBefore = dataDirEl.value.trim()
+      // fillSettings 会把 liveDataDir 更新成新值，所以"这次到底改没改目录"要先记下来
+      const dirChanged = Boolean(dirBefore) && normDir(dirBefore) !== normDir(liveDataDir)
       try {
         const data = await post('/api/settings', {
           profile: profileEl.value.trim(),
@@ -2166,6 +2225,8 @@
           port: Number(portEl.value),
           // 留空表示不改：服务端只在有值时才热切换版本目录
           ...(dirBefore ? { dataDir: dirBefore } : {}),
+          // 只在新旧目录真的不同才问迁移；相同目录时这个标志没有意义，别写成 false 掩盖默认
+          ...(dirBefore && normDir(dirBefore) !== normDir(liveDataDir) ? { migrateVersions: migrateEl.checked } : {}),
           autoStart: autoStartEl.checked,
           seedMarket: seedMarketEl.checked,
           autoDisablePlugins: autoDisableEl.checked,
@@ -2181,8 +2242,12 @@
         // 管理页还监听在旧端口上：换端口得重启启动器（窗口和托盘都是它开的）
         if (Number(data.port) !== Number(data.listenPort)) {
           settingsHint.textContent = t('已保存。重启启动器后管理页改到 {port} 端口。', { port: data.port })
-        } else if (dirBefore && data.dataDir && normDir(data.dataDir) !== normDir(dirBefore)) {
-          settingsHint.textContent = t('已保存。版本目录已改为 {dir}（立即生效）；已安装的版本不会自动迁移，需要就手动复制过去。', { dir: data.dataDir })
+        } else if (Array.isArray(data.migrated) && data.migrated.length) {
+          settingsHint.textContent = t('已保存。版本目录已改为 {dir}，{count} 个已装版本一起搬过去了。', { dir: data.dataDir, count: data.migrated.length })
+        } else if (Array.isArray(data.migrated)) {
+          settingsHint.textContent = t('已保存。版本目录已改为 {dir}（旧目录里没有已装版本，没什么可搬）。', { dir: data.dataDir })
+        } else if (dirChanged) {
+          settingsHint.textContent = t('已保存。版本目录已改为 {dir}（立即生效）；旧目录里的版本没有搬，需要就手动复制过去。', { dir: data.dataDir })
         } else {
           settingsHint.textContent = t('已保存。')
         }
@@ -2229,17 +2294,43 @@
           plugin.enabled ? '' : t('已禁用'),
           plugin.toggleable ? '' : t(plugin.reason || ''),
         ].filter(Boolean).join(' · ')
-        return `<label class="toggle plugin-row${plugin.enabled ? '' : ' off'}" title="${escapeHtml(plugin.reason || plugin.name)}">
-          <span class="plugin-main">
-            <span class="plugin-name">${escapeHtml(plugin.name)}</span>
-            <span class="plugin-meta">${escapeHtml(meta)}</span>
-          </span>
-          <input type="checkbox" data-plugin="${escapeHtml(plugin.name)}" ${plugin.enabled ? 'checked' : ''} ${plugin.toggleable ? '' : 'disabled'} />
-        </label>`
+        // 行本身不再是 label：整包卸载的按钮放进 label 里会被当成开关的一部分
+        return `<div class="plugin-row${plugin.enabled ? '' : ' off'}">
+          <label class="toggle" title="${escapeHtml(plugin.reason || plugin.name)}">
+            <span class="plugin-main">
+              <span class="plugin-name">${escapeHtml(plugin.name)}</span>
+              <span class="plugin-meta">${escapeHtml(meta)}</span>
+            </span>
+            <input type="checkbox" data-plugin="${escapeHtml(plugin.name)}" ${plugin.enabled ? 'checked' : ''} ${plugin.toggleable ? '' : 'disabled'} />
+          </label>
+          <button class="ghost plugin-remove" type="button" data-remove="${escapeHtml(plugin.name)}" ${plugin.removable ? '' : 'disabled'} title="${escapeHtml(t(plugin.removeReason || '卸载这个插件（整包删掉，不只是停用）'))}">${t('卸载')}</button>
+        </div>`
       }).join('')
       pluginListEl.querySelectorAll('input[data-plugin]').forEach((el) => {
         el.onchange = () => { void togglePlugin(el.dataset.plugin, el.checked) }
       })
+      pluginListEl.querySelectorAll('button[data-remove]').forEach((el) => {
+        el.onclick = () => { void removePlugin(el.dataset.remove) }
+      })
+    }
+
+    /**
+     * 卸载要走二次确认：这是真的把包删掉，跟上面的开关不是一回事，
+     * 装回来得去插件市场重新下。用原生 confirm 就够——误操作的代价已经由 disabled 挡掉一半。
+     */
+    async function removePlugin(name) {
+      if (!window.confirm(t('要卸载 {name} 吗？这是整包删除，不是停用；装回来要去插件市场重新安装。', { name }))) return
+      pluginHintEl.textContent = t('正在卸载 {name}…', { name })
+      try {
+        const data = await post('/api/plugins/remove', { name })
+        renderPlugins(data)
+        pluginHintEl.textContent = data.prunedRows?.length
+          ? t('{name} 已卸载，顺手清掉了它的停用行。', { name })
+          : t('{name} 已卸载。', { name })
+      } catch (error) {
+        pluginHintEl.textContent = error.message
+        loadPlugins()
+      }
     }
 
     async function togglePlugin(name, enabled) {
