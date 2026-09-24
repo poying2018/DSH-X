@@ -1581,11 +1581,47 @@ async function waitUntilReady(proc, version) {
 }
 
 /**
+ * 从 app 页面里挖出 `window.__DSH_BOOT__` 的模块清单。
+ * 0.1.7 起客户端包地址是相对路径的合并 URL（`plugins/??<id>/client.js&rev=…`），
+ * 整页找不到一个 `/plugins/`，只按老写法抓就会永远数到 0 个包。
+ * @returns {Array<{id: string, url: string}>}
+ */
+function bootManifestEntries(html) {
+  const at = String(html).indexOf('__DSH_BOOT__')
+  const from = at < 0 ? -1 : html.indexOf('{', at)
+  if (from < 0) return []
+  let depth = 0
+  let end = -1
+  for (let index = from; index < html.length; index += 1) {
+    const ch = html[index]
+    if (ch === '{') depth += 1
+    else if (ch === '}') {
+      depth -= 1
+      if (depth === 0) {
+        end = index + 1
+        break
+      }
+    }
+  }
+  if (end < 0) return []
+  try {
+    const rows = JSON.parse(html.slice(from, end)).entries
+    if (!Array.isArray(rows)) return []
+    return rows
+      .filter((row) => row && typeof row.url === 'string')
+      .map((row) => ({ id: String(row.id || row.url), url: row.url }))
+  } catch {
+    // 清单读不出来就当没有：还有老的 /plugins/ 抓法兜底，别把自检整个弄挂
+    return []
+  }
+}
+
+/**
  * 页面自检：按浏览器的方式抓一次 app 页面（token 换 cookie），把页面引用的所有
  * 客户端插件包请求一遍。dsh 进程活着不等于页面打得开——实例切换后浏览器里的旧
  * 页面会一直报「bundle script failed to load」，这一步用来区分"实例有问题"和
  * "你看的是旧页面"。
- * @returns {{origin: string, total: number, ok: number, failed: Array<{url: string, status: number, error?: string}>}}
+ * @returns {{origin: string, total: number, ok: number, source: 'boot'|'html'|'none', failed: Array<{id: string, url: string, status: number, error?: string}>}}
  */
 export async function checkWebPage(origin, token) {
   const base = String(origin).replace(/\/+$/, '')
@@ -1597,20 +1633,46 @@ export async function checkWebPage(origin, token) {
   const headers = cookie ? { cookie } : {}
   const page = await fetch(`${base}/`, { headers, signal: AbortSignal.timeout(15000) })
   const html = await page.text()
-  const urls = [...new Set([...html.matchAll(/\/plugins\/[^"'\s<>)]+/g)].map((match) => match[0].replaceAll('&amp;', '&')))]
+  const listed = bootManifestEntries(html)
+  // 老内核（0.1.5 那批）没有 __DSH_BOOT__，页面里是绝对路径的 /plugins/... script 标签
+  const scraped = [...new Set([...html.matchAll(/\/plugins\/[^"'\s<>)]+/g)].map((match) => match[0].replaceAll('&amp;', '&')))]
+    .map((url) => ({ id: url, url }))
+  const seen = new Set()
+  const targets = [...listed, ...scraped].filter((row) => !seen.has(row.url) && seen.add(row.url))
+  const source = listed.length ? 'boot' : scraped.length ? 'html' : 'none'
   const failed = []
   let ok = 0
-  for (const url of urls) {
+  for (const row of targets) {
+    const href = new URL(row.url, `${base}/`).href
     try {
-      const res = await fetch(`${base}${url}`, { headers, signal: AbortSignal.timeout(30000) })
+      const res = await fetch(href, { headers, signal: AbortSignal.timeout(30000) })
       await res.arrayBuffer()
       if (res.status === 200) ok += 1
-      else failed.push({ url, status: res.status })
+      else failed.push({ id: row.id, url: row.url, status: res.status })
     } catch (error) {
-      failed.push({ url, status: 0, error: error instanceof Error ? error.message : String(error) })
+      failed.push({ id: row.id, url: row.url, status: 0, error: error instanceof Error ? error.message : String(error) })
     }
   }
-  return { origin: base, total: urls.length, ok, failed }
+  return { origin: base, total: targets.length, ok, source, failed }
+}
+
+/**
+ * 自检结论 → 日志行。第一行是总结，后面几行点名失败的模块。
+ * total 为 0 时不能说"全部正常"——那多半是清单没找到（内核换了页面写法），不是真的没问题。
+ * @param {{total?: number, ok?: number, source?: string, failed?: Array<{id?: string, url?: string, status?: number, error?: string}>}} result
+ * @returns {string[]}
+ */
+export function webHealthLines(result) {
+  const { total = 0, ok = 0, source = 'none', failed = [] } = result || {}
+  if (!total) {
+    return [`页面自检：没找到客户端插件清单（页面里没有 __DSH_BOOT__，也没有 /plugins/ 引用${source === 'none' ? '' : `，来源 ${source}`}），这次没法判断`]
+  }
+  if (!failed.length) return [`页面自检：${total} 个客户端插件包全部正常`]
+  const lines = [`页面自检：${ok}/${total} 个客户端插件包正常，${failed.length} 个失败`]
+  for (const item of failed.slice(0, 5)) {
+    lines.push(`[自检] ${item.id || item.url} → HTTP ${item.status || '-'}${item.error ? ` ${item.error}` : ''}`)
+  }
+  return lines
 }
 
 /** 启动成功后异步自检并把结论写进状态（失败不影响运行中的实例）。 */
@@ -1627,12 +1689,7 @@ async function selfCheckPage(url, version) {
       ok: result.ok,
       failed: result.failed.slice(0, 8),
     }
-    if (result.failed.length) {
-      pushLog(`页面自检：${result.ok}/${result.total} 个客户端插件包正常，${result.failed.length} 个失败`)
-      for (const item of result.failed.slice(0, 5)) pushLog(`[自检] HTTP ${item.status || '-'} ${item.url.slice(0, 160)}`)
-    } else {
-      pushLog(`页面自检：${result.total} 个客户端插件包全部正常`)
-    }
+    for (const line of webHealthLines(result)) pushLog(line)
     await emitState()
   } catch (error) {
     pushLog(`页面自检没跑成：${error instanceof Error ? error.message : error}`)
