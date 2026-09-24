@@ -603,6 +603,9 @@
       background: transparent;
     }
     .set-row + .set-row { border-top: 1px solid #edf1f9; }
+    /* .set-row 自己声明了 display，会把 [hidden] 的默认 display:none 顶掉，
+       所以"默认隐藏"的那两行搬迁开关必须像别处一样补一条规则 */
+    .set-row[hidden] { display: none; }
     .set-row:focus-within { background: #f8fbff; box-shadow: inset 3px 0 0 var(--accent); }
     .set-text { min-width: 0; }
     .set-name { display: block; color: var(--text); font-size: 14px; font-weight: 650; }
@@ -1510,6 +1513,8 @@
   "插件目录已改为 {dir}，{count} 项内容一起搬过去了。": "The plugins directory is now {dir}, and {count} items moved with it.",
   "插件目录已改为 {dir}（旧目录里没有要搬的内容）。": "The plugins directory is now {dir} (there was nothing in the old directory to move).",
   "插件目录已改为 {dir}；旧目录里的插件内容没有搬。": "The plugins directory is now {dir}; the plugin data in the old directory was not moved.",
+  "版本目录已经是 {dir} 了，没动东西。": "The version directory is already {dir} — nothing was moved.",
+  "插件目录已经是 {dir} 了，没动东西。": "The plugins directory is already {dir} — nothing was moved.",
   "旧目录里有 {count} 个已装版本（每个几百 MB）。搬过去后旧目录就空了；只改目录的话得自己复制。": "The old directory holds {count} installed versions (a few hundred MB each). Moving them leaves it empty; if you only change the directory you have to copy them yourself.",
   "旧目录里有 {count} 项插件和 profile 内容。搬过去后旧目录就空了；插件里的链接带绝对路径，搬完若报解析不到 bundle，启动时会自动重装依赖。": "The old directory holds {count} plugin / profile items. Moving them leaves it empty; plugin links carry absolute paths, so if a bundle fails to resolve afterwards the launcher reinstalls the profile dependencies on start.",
   "读不到旧目录里有多少东西，先按不迁移处理。": "Could not count what is in the old directory — treating this as no migration.",
@@ -2994,19 +2999,28 @@
         if ('autoStart' in patch && Boolean(data.autoStart) !== patch.autoStart) {
           notes.push(t('开机自启未能修改，请查看日志。'))
         }
-        if (Array.isArray(data.migrated) && data.migrated.length) {
-          notes.push(t('版本目录已改为 {dir}，{count} 个已装版本一起搬过去了。', { dir: data.dataDir, count: data.migrated.length }))
-        } else if (Array.isArray(data.migrated)) {
-          notes.push(t('版本目录已改为 {dir}（旧目录里没有已装版本，没什么可搬）。', { dir: data.dataDir }))
-        } else if (dirChanged) {
-          notes.push(t('版本目录已改为 {dir}；旧目录里的版本没有搬，需要就手动复制过去。', { dir: data.dataDir }))
+        // "换没换目录"以服务端回执为准：本地那个 live 值可能已经被别的窗口改掉了
+        if ('dataDir' in patch) {
+          if (data.dataDirChanged === false) {
+            notes.push(t('版本目录已经是 {dir} 了，没动东西。', { dir: data.dataDir }))
+          } else if (Array.isArray(data.migrated) && data.migrated.length) {
+            notes.push(t('版本目录已改为 {dir}，{count} 个已装版本一起搬过去了。', { dir: data.dataDir, count: data.migrated.length }))
+          } else if (Array.isArray(data.migrated)) {
+            notes.push(t('版本目录已改为 {dir}（旧目录里没有已装版本，没什么可搬）。', { dir: data.dataDir }))
+          } else {
+            notes.push(t('版本目录已改为 {dir}；旧目录里的版本没有搬，需要就手动复制过去。', { dir: data.dataDir }))
+          }
         }
-        if (Array.isArray(data.migratedHome) && data.migratedHome.length) {
-          notes.push(t('插件目录已改为 {dir}，{count} 项内容一起搬过去了。', { dir: data.dshHome, count: data.migratedHome.length }))
-        } else if (Array.isArray(data.migratedHome)) {
-          notes.push(t('插件目录已改为 {dir}（旧目录里没有要搬的内容）。', { dir: data.dshHome }))
-        } else if (homeChanged) {
-          notes.push(t('插件目录已改为 {dir}；旧目录里的插件内容没有搬。', { dir: data.dshHome }))
+        if ('dshHome' in patch) {
+          if (data.dshHomeChanged === false) {
+            notes.push(t('插件目录已经是 {dir} 了，没动东西。', { dir: data.dshHome }))
+          } else if (Array.isArray(data.migratedHome) && data.migratedHome.length) {
+            notes.push(t('插件目录已改为 {dir}，{count} 项内容一起搬过去了。', { dir: data.dshHome, count: data.migratedHome.length }))
+          } else if (Array.isArray(data.migratedHome)) {
+            notes.push(t('插件目录已改为 {dir}（旧目录里没有要搬的内容）。', { dir: data.dshHome }))
+          } else {
+            notes.push(t('插件目录已改为 {dir}；旧目录里的插件内容没有搬。', { dir: data.dshHome }))
+          }
         }
         settingsHint.textContent = notes.join('')
       } catch (error) {

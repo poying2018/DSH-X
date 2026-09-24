@@ -703,16 +703,22 @@ function applyPickerMode(stored) {
 async function saveManagerSettings(body) {
   let migrated = null
   let homeMigrated = null
+  // "这次到底换没换目录"只有服务端说得准：页面手里那个 live 值可能已经被另一个窗口
+  // 或上一次保存改掉了，拿它判断就会把"其实没换"说成"换了但没搬"。
+  let dataDirChanged = false
+  let dshHomeChanged = false
   if (body.dataDir) {
     const dir = safeDataDir(body.dataDir)
     if (dir !== DATA && current) throw new Error('请先停止再改版本目录')
     if (installing) throw new Error('正在安装，稍后再改版本目录')
+    dataDirChanged = dir !== DATA
     // 迁移默认开：改目录的人要的通常就是"换到大盘"，把几百 MB 留在旧盘是意外结果。
     // 显式传 migrateVersions:false 才是只换指针（旧目录里的版本留在原地）。
     migrated = await applyDataDir(dir, { migrate: body.migrateVersions !== false })
   }
   if (body.dshHome) {
     const dir = safeDshHome(body.dshHome)
+    dshHomeChanged = dir !== DSH_HOME
     if (dir !== DSH_HOME) {
       // 插件目录里全是 dsh 进程打开着的文件，边跑边搬只会搬出一堆断链
       if (current) throw new Error('请先停止 dsh 再改插件目录')
@@ -765,9 +771,15 @@ async function saveManagerSettings(body) {
   }
   await emitState()
   const out = await publicSettings()
-  // 把这次真正搬走的版本回给页面，提示行才能说清"搬了"还是"没搬"
-  if (migrated) out.migrated = migrated
-  if (homeMigrated) out.migratedHome = homeMigrated
+  // 把这次真正发生了什么回给页面，提示行才能说清"搬了"/"没让搬"/"其实没换目录"
+  if ('dataDir' in body) {
+    out.dataDirChanged = dataDirChanged
+    if (migrated) out.migrated = migrated
+  }
+  if ('dshHome' in body) {
+    out.dshHomeChanged = dshHomeChanged
+    if (homeMigrated) out.migratedHome = homeMigrated
+  }
   return out
 }
 

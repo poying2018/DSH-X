@@ -80,6 +80,8 @@ test('版本目录和插件目录各一行，说明文字不再互相指错地�
 test('改过目录且旧目录有东西时，问一句要不要一起搬（两个目录各一行）', () => {
   // 只有"目录改了" + "旧目录里确实有东西"两个条件都成立才出现这一行，否则是白噪音
   assert.match(html, /<label class="toggle set-row" id="migrateRow" hidden>/, '默认隐藏')
+  // .set-row 自带 display:flex，会盖掉 [hidden] 的默认 none —— 少了这条规则，"默认隐藏"是假的
+  assert.match(html, /\.set-row\[hidden\] \{ display: none; \}/, 'hidden 要有对应的显示规则兜住')
   assert.match(html, /<input id="migrateVersions" type="checkbox" checked/, '默认搬过去')
   assert.match(html, /<label class="toggle set-row" id="homeMigrateRow" hidden>/, '插件目录那行同样默认隐藏')
   assert.match(html, /<input id="migrateDshHome" type="checkbox" checked/)
@@ -111,6 +113,11 @@ test('保存时把两个目录和各自的迁移意愿一起提交，并回显�
   assert.match(html, /const normDir = \(value\) => String\(value \?\? ''\)\.trim\(\)\.replace\(\/\[\\\\\/\]\+\$\/, ''\)/)
   assert.match(html, /liveDataDir = String\(data\.dataDir \?\? liveDataDir\)/, '提交后要把服务端真在用的目录记下来')
   assert.match(html, /liveDshHome = String\(data\.dshHome \?\? liveDshHome\)/)
+  // 文案分支看服务端回执，不看页面自己那份可能过期的 live 值
+  assert.match(html, /if \('dshHome' in patch\) \{[\s\S]{0,80}?if \(data\.dshHomeChanged === false\)/, '"其实没换目录"要单独说一句')
+  assert.match(html, /if \('dataDir' in patch\) \{[\s\S]{0,80}?if \(data\.dataDirChanged === false\)/)
+  assert.match(html, /版本目录已经是 \{dir\} 了，没动东西。/)
+  assert.match(html, /插件目录已经是 \{dir\} 了，没动东西。/)
   // 新目录名用 {dir} 占位传进去，别只断言写死了半句
   assert.match(html, /\{ dir: data\.dataDir, count: data\.migrated\.length \}/, '数量也是占位传进去的')
   assert.match(html, /\{ dir: data\.dshHome, count: data\.migratedHome\.length \}/)
