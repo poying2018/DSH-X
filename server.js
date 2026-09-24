@@ -56,7 +56,10 @@ let DSH_HOME = resolveDshHome()
 const PKG = '@deepseek-ai/dsh'
 const MARKET_PKG = 'dshmarket'
 const APP_VERSION = String(pkg.version || '0.0.0')
-const APP_REPO = 'yyh-001/DSH-X'
+// 更新提示走的是这份 fork 的 releases：上游 yyh-001/DSH-X 的包不带本仓库这几个改动，
+// 拿它的 latest 当"新版本"会把人降级回上游。仓库地址只有这一处，页面要用的话从
+// /api/self 的 repo 字段读，别再抄一份字面量。
+const APP_REPO = 'poying2018/DSH-X'
 const APP_SETUP = 'DSH-Setup.exe'
 // 管理页端口：环境变量 PORT（开发和测试用）优先，其余看设置；启动时 startServer() 再定最终值
 let PORT = resolvePort() || DEFAULT_PORT
@@ -957,7 +960,7 @@ function stripTag(tag) {
 async function checkSelfUpdate() {
   const current = APP_VERSION
   const url = `https://github.com/${APP_REPO}/releases/latest/download/${APP_SETUP}`
-  const fallback = { current, latest: null, update: false, url }
+  const fallback = { current, latest: null, update: false, url, repo: APP_REPO }
   if (selfCache.data && Date.now() - selfCache.at < 30 * 60 * 1000) return selfCache.data
   try {
     const latest = await fetchLatestTag()
@@ -965,7 +968,7 @@ async function checkSelfUpdate() {
     const cur = parseVer(current)
     const next = parseVer(latest)
     const update = Boolean(cur && next && cmpVer(next, cur) > 0)
-    const data = { current, latest, update, url }
+    const data = { current, latest, update, url, repo: APP_REPO }
     selfCache = { at: Date.now(), data }
     return data
   } catch {

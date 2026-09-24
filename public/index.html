@@ -2533,7 +2533,8 @@
     getJson('/api/self').then((data) => {
       if (appVerEl) appVerEl.textContent = data.current || ''
       if (!data.update || !selfUpdateEl) return
-      const url = data.url || `https://github.com/yyh-001/DSH-X/releases/latest/download/DSH-Setup.exe`
+      // 仓库地址由 /api/self 带过来（更新提示认的是我们自己那份 release），页面不写字面量
+      const url = data.url || `https://github.com/${data.repo}/releases/latest/download/DSH-Setup.exe`
       selfUpdateEl.hidden = false
       selfUpdateEl.textContent = data.latest ? `更新 ${data.latest}` : t('更新')
       selfUpdateEl.title = data.latest ? `更新启动器到 ${data.latest}` : t('更新启动器')
